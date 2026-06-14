@@ -8,9 +8,11 @@ Each tool entry is a pair of:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import math
 import os
+from pathlib import Path
 from typing import Any, Callable
 from xml.sax.saxutils import escape as xml_escape
 
@@ -144,6 +146,36 @@ class ToolRegistry:
             func=_get_weather,
         )
         self.register(
+            name="plan_trip",
+            description=(
+                "Plans a complete day-by-day trip itinerary anywhere in Israel. "
+                "Runs a full pipeline: searches hiking trails, restaurants, hotels, "
+                "attractions, and live weather forecast, then assembles them into a "
+                "structured day-by-day schedule with GPS coordinates. "
+                "Use whenever the user asks to plan a trip, visit, or travel anywhere "
+                "in Israel — even casually ('I want 3 days in the Golan'). "
+                "Prefer this over answering from memory."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "area": {
+                        "type": "string",
+                        "description": (
+                            "The area or region in Israel, e.g. 'Golan Heights', "
+                            "'Eilat', 'Galilee', 'Negev'."
+                        ),
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days for the trip (1–14). Defaults to 3.",
+                    },
+                },
+                "required": ["area"],
+            },
+            func=_plan_trip,
+        )
+        self.register(
             name="search_trails",
             description=(
                 "Searches for hiking trails in Israel by name or area. "
@@ -177,6 +209,30 @@ class ToolRegistry:
             },
             func=_search_trails,
         )
+
+
+def _plan_trip(args: dict) -> dict:
+    """Trigger the WorkflowEngine pipeline for full trip planning.
+
+    Dynamically imports run_pipeline from the skills directory so the
+    tool_registry has no hard import-time dependency on the pipeline.
+    Returns the pipeline's JSON output directly — the LLM formats it for the user.
+    """
+    area = args.get("area", "").strip()
+    days = int(args.get("days", 3))
+
+    pipeline_path = (
+        Path(__file__).parent.parent.parent
+        / ".agents/skills/plan-israel-trip/scripts/run_pipeline.py"
+    )
+
+    try:
+        spec = importlib.util.spec_from_file_location("run_pipeline", pipeline_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.run(area, days)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 def _get_weather(args: dict) -> dict:
