@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["name", "type"],
+    "properties": {
+      "name":         { "type": "string" },
+      "type":         { "type": "string", "enum": ["restaurant", "hotel", "attraction"] },
+      "address":      { "type": "string" },
+      "rating":       { "type": "number", "minimum": 0, "maximum": 5 },
+      "review_count": { "type": "integer" },
+      "price_level":  { "type": "string" },
+      "description":  { "type": "string" },
+      "website":      { "type": "string", "format": "uri" },
+      "phone":        { "type": "string" },
+      "google_maps":  { "type": "string", "format": "uri" },
+      "location": {
+        "type": "object",
+        "properties": {
+          "lat": { "type": "number" },
+          "lng": { "type": "number" }
+        }
+      },
+      "opening_hours": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    },
+    "additionalProperties": false
+  }
+}
