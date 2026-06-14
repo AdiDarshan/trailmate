@@ -9,6 +9,7 @@ Each tool entry is a pair of:
 from __future__ import annotations
 
 import json
+import math
 import os
 from typing import Any, Callable
 from xml.sax.saxutils import escape as xml_escape
@@ -83,8 +84,11 @@ class ToolRegistry:
         """Register the project's built-in tools.
 
         Currently:
-        - `export_pdf`   — write text to a PDF on local disk via ReportLab.
-        - `get_weather`  — fetch current weather for a city via OpenWeatherMap.
+        - `export_pdf`    — write text to a PDF on local disk via ReportLab.
+        - `get_weather`   — fetch current weather for a city via OpenWeatherMap.
+        - `search_trails` — search Israeli hiking trails via Israel Hiking Map,
+                            enriched with OSM tags (Overpass) and computed
+                            distance + elevation gain (IHM elevation API).
         """
         self.register(
             name="export_pdf",
@@ -138,6 +142,40 @@ class ToolRegistry:
                 "required": ["city"],
             },
             func=_get_weather,
+        )
+        self.register(
+            name="search_trails",
+            description=(
+                "Searches for hiking trails in Israel by name or area. "
+                "Returns trail name, location, color marking, network level, "
+                "distance (km), elevation gain (m), and difficulty rating. "
+                "Data is sourced from Israel Hiking Map (OpenStreetMap), "
+                "enriched with OSM tags via Overpass, and computed geometry "
+                "via the IHM routing and elevation APIs. No API key required."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Trail or area name to search for, e.g. "
+                            "'Carmel', 'Israel National Trail', 'Ein Gedi'."
+                        ),
+                    },
+                    "language": {
+                        "type": "string",
+                        "enum": ["en", "he"],
+                        "description": "Language for trail names. Defaults to 'en'.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of trails to return (1–5). Defaults to 3.",
+                    },
+                },
+                "required": ["query"],
+            },
+            func=_search_trails,
         )
 
 
@@ -197,6 +235,202 @@ def _get_weather(args: dict) -> dict:
         return {"status": "error", "message": "Weather API request timed out."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+def _search_trails(args: dict) -> dict:
+    """Three-API flow for Israeli hiking trail search.
+
+    Step 1 — Israel Hiking Map search:
+        GET /api/search/{term}?language=en
+        Returns POIs/trails; we keep only entries with icon "icon-hike".
+
+    Step 2 — Overpass tag enrichment (OSM relations only):
+        POST https://overpass-api.de/api/interpreter
+        Query: [out:json];relation({id});out tags;
+        Yields: trail color, network level, ref number, description.
+
+    Step 3 — Geometry + elevation (when distance tag absent):
+        POST Overpass for way geometry: relation({id});way(r);out geom;
+        Compute distance via Haversine across all nodes.
+        Sample up to 20 points, call IHM /api/elevation to get elevations.
+        Sum positive deltas → elevation gain → difficulty label.
+
+    Returns {"status": "success", "count": N, "trails": [...]}.
+    Each trail dict contains whichever fields were available; missing
+    fields are simply omitted rather than returned as None.
+    """
+    query = args.get("query", "").strip()
+    language = args.get("language", "en")
+    max_results = min(int(args.get("max_results", 3)), 5)
+
+    if not query:
+        return {"status": "error", "message": "The 'query' argument is required."}
+
+    # ── Step 1: Israel Hiking Map search ────────────────────────────────────
+    try:
+        search_resp = requests.get(
+            f"https://israelhiking.osm.org.il/api/search/{requests.utils.quote(query)}",
+            params={"language": language},
+            timeout=10,
+        )
+        search_resp.raise_for_status()
+        results = search_resp.json()
+    except Exception as e:
+        return {"status": "error", "message": f"Trail search failed: {e}"}
+
+    # Keep only hiking trails (icon-hike), cap at max_results.
+    trails = [r for r in results if "hike" in r.get("icon", "")][:max_results]
+
+    if not trails:
+        return {
+            "status": "success",
+            "count": 0,
+            "trails": [],
+            "message": f"No hiking trails found for '{query}'.",
+        }
+
+    enriched = []
+    for trail in trails:
+        info: dict[str, Any] = {
+            "name": trail.get("title"),
+            "display_name": trail.get("displayName"),
+            "location": trail.get("location"),
+        }
+
+        osm_id = trail.get("id", "")
+
+        if osm_id.startswith("relation_"):
+            rel_id = osm_id.replace("relation_", "")
+
+            # ── Step 2: Overpass tag enrichment ─────────────────────────────
+            try:
+                tag_resp = requests.post(
+                    "https://overpass-api.de/api/interpreter",
+                    data=f"[out:json];relation({rel_id});out tags;",
+                    timeout=15,
+                )
+                tag_resp.raise_for_status()
+                elements = tag_resp.json().get("elements", [])
+                if elements:
+                    tags = elements[0].get("tags", {})
+                    color = _parse_trail_color(tags.get("osmc:symbol", ""))
+                    if color:
+                        info["trail_color"] = color
+                    network_map = {"lwn": "local", "rwn": "regional", "nwn": "national"}
+                    if tags.get("network"):
+                        info["network"] = network_map.get(tags["network"], tags["network"])
+                    if tags.get("ref"):
+                        info["ref"] = tags["ref"]
+                    if tags.get("description"):
+                        info["description"] = tags["description"]
+                    if tags.get("distance"):
+                        # OSM distance tags are sometimes "12 km" or just "12"
+                        raw = tags["distance"].replace("km", "").strip()
+                        try:
+                            info["distance_km"] = float(raw)
+                        except ValueError:
+                            pass
+            except Exception:
+                pass  # Tag enrichment is best-effort; continue without it.
+
+            # ── Step 3: Geometry → distance + elevation gain ─────────────────
+            # Only run if we still don't have a distance from OSM tags.
+            if "distance_km" not in info:
+                try:
+                    geom_resp = requests.post(
+                        "https://overpass-api.de/api/interpreter",
+                        data=f"[out:json];relation({rel_id});way(r);out geom;",
+                        timeout=20,
+                    )
+                    geom_resp.raise_for_status()
+                    ways = geom_resp.json().get("elements", [])
+
+                    # Collect every node coordinate across all ways.
+                    all_coords: list[tuple[float, float]] = []
+                    for way in ways:
+                        for node in way.get("geometry", []):
+                            all_coords.append((node["lat"], node["lon"]))
+
+                    if len(all_coords) >= 2:
+                        # Total trail length via Haversine.
+                        total_m = sum(
+                            _haversine(all_coords[i], all_coords[i + 1])
+                            for i in range(len(all_coords) - 1)
+                        )
+                        info["distance_km"] = round(total_m / 1000, 1)
+
+                        # Sample up to 20 evenly-spaced points for elevation.
+                        step = max(1, len(all_coords) // 20)
+                        sample = all_coords[::step][:20]
+                        points_param = "|".join(f"{lat},{lon}" for lat, lon in sample)
+
+                        elev_resp = requests.get(
+                            "https://israelhiking.osm.org.il/api/elevation",
+                            params={"points": points_param},
+                            timeout=10,
+                        )
+                        elev_resp.raise_for_status()
+                        elevations: list[float] = elev_resp.json()
+
+                        if len(elevations) >= 2:
+                            gain = sum(
+                                max(0.0, elevations[i + 1] - elevations[i])
+                                for i in range(len(elevations) - 1)
+                            )
+                            info["elevation_gain_m"] = round(gain)
+                            info["difficulty"] = _classify_difficulty(
+                                info["distance_km"], gain
+                            )
+                except Exception:
+                    pass  # Geometry enrichment is best-effort.
+
+        enriched.append(info)
+
+    return {"status": "success", "count": len(enriched), "trails": enriched}
+
+
+# ── Trail helper functions ───────────────────────────────────────────────────
+
+def _parse_trail_color(osmc_symbol: str) -> str:
+    """Extract a human-readable color from an osmc:symbol tag value.
+
+    The tag format is "foreground:background:overlay[:text]", e.g.
+    "orange:orange:white_right:blue_stripe". We look for a known color
+    name in any colon-separated segment.
+    """
+    known = {"red", "blue", "green", "black", "orange", "white", "yellow"}
+    for part in osmc_symbol.split(":"):
+        # A segment may be "white_right" — check the first word.
+        word = part.split("_")[0]
+        if word in known:
+            return word
+    return ""
+
+
+def _haversine(p1: tuple[float, float], p2: tuple[float, float]) -> float:
+    """Return the great-circle distance in metres between two (lat, lon) points."""
+    R = 6_371_000  # Earth radius in metres
+    lat1, lon1 = math.radians(p1[0]), math.radians(p1[1])
+    lat2, lon2 = math.radians(p2[0]), math.radians(p2[1])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    return R * 2 * math.asin(math.sqrt(a))
+
+
+def _classify_difficulty(distance_km: float, elevation_gain_m: float) -> str:
+    """Return easy / moderate / hard based on distance and elevation gain.
+
+    Uses a simple weighted score: every 100 m of gain counts as 1 km.
+    This mirrors common Israeli trail grading conventions.
+    """
+    score = distance_km + elevation_gain_m / 100
+    if score < 5:
+        return "easy"
+    elif score < 15:
+        return "moderate"
+    else:
+        return "hard"
 
 
 def _export_pdf(args: dict) -> dict:
