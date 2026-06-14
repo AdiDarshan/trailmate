@@ -9,9 +9,11 @@ Each tool entry is a pair of:
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Callable
 from xml.sax.saxutils import escape as xml_escape
 
+import requests
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
@@ -81,7 +83,8 @@ class ToolRegistry:
         """Register the project's built-in tools.
 
         Currently:
-        - `export_pdf` — write text to a PDF on local disk via ReportLab.
+        - `export_pdf`   — write text to a PDF on local disk via ReportLab.
+        - `get_weather`  — fetch current weather for a city via OpenWeatherMap.
         """
         self.register(
             name="export_pdf",
@@ -104,6 +107,96 @@ class ToolRegistry:
             },
             func=_export_pdf,
         )
+        self.register(
+            name="get_weather",
+            description=(
+                "Fetches the current weather for a given city. "
+                "Returns temperature (°C), feels-like temperature, humidity, "
+                "wind speed, and a short condition description. "
+                "Optionally accepts a two-letter country code to disambiguate "
+                "cities with the same name (e.g. 'Toledo,ES' vs 'Toledo,US')."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": (
+                            "City name, optionally with ISO 3166 country code, "
+                            "e.g. 'Lisbon', 'Paris,FR', 'Springfield,US'."
+                        ),
+                    },
+                    "units": {
+                        "type": "string",
+                        "enum": ["metric", "imperial"],
+                        "description": (
+                            "Unit system for temperature and wind speed. "
+                            "'metric' → °C / m/s (default); 'imperial' → °F / mph."
+                        ),
+                    },
+                },
+                "required": ["city"],
+            },
+            func=_get_weather,
+        )
+
+
+def _get_weather(args: dict) -> dict:
+    """Fetch current weather from OpenWeatherMap's free /weather endpoint.
+
+    Requires OPENWEATHERMAP_API_KEY in the environment (or a .env file
+    loaded by the harness). Returns a flat dict the LLM can read back
+    directly, or {"status": "error", "message": ...} on any failure.
+
+    API docs: https://openweathermap.org/current
+    """
+    api_key = os.getenv("OPENWEATHERMAP_API_KEY")
+    if not api_key:
+        return {
+            "status": "error",
+            "message": (
+                "OPENWEATHERMAP_API_KEY is not set. "
+                "Add it to your .env file to use the weather tool."
+            ),
+        }
+
+    city = args.get("city", "").strip()
+    if not city:
+        return {"status": "error", "message": "The 'city' argument is required."}
+
+    units = args.get("units", "metric")
+
+    try:
+        response = requests.get(
+            "https://api.openweathermap.org/data/2.5/weather",
+            params={"q": city, "appid": api_key, "units": units},
+            timeout=10,
+        )
+
+        if response.status_code == 401:
+            return {"status": "error", "message": "Invalid OpenWeatherMap API key."}
+        if response.status_code == 404:
+            return {"status": "error", "message": f"City not found: '{city}'."}
+        response.raise_for_status()
+
+        data = response.json()
+        unit_label = "°C" if units == "metric" else "°F"
+        speed_label = "m/s" if units == "metric" else "mph"
+
+        return {
+            "status": "success",
+            "city": data["name"],
+            "country": data["sys"]["country"],
+            "condition": data["weather"][0]["description"],
+            "temperature": f"{data['main']['temp']}{unit_label}",
+            "feels_like": f"{data['main']['feels_like']}{unit_label}",
+            "humidity": f"{data['main']['humidity']}%",
+            "wind_speed": f"{data['wind']['speed']} {speed_label}",
+        }
+    except requests.exceptions.Timeout:
+        return {"status": "error", "message": "Weather API request timed out."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 def _export_pdf(args: dict) -> dict:
