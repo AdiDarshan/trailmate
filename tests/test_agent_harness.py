@@ -12,10 +12,12 @@ def test_harness_seeds_chat_history_with_system_prompt(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")
     harness = AgentHarness()
 
-    assert harness.chat_history[0] == {
-        "role": "system",
-        "content": TRAILMATE_SYSTEM_PROMPT,
-    }
+    system_msg = harness.chat_history[0]
+    assert system_msg["role"] == "system"
+    # The full system prompt is the base string extended with a dynamically-
+    # scanned <available_skills> block; verify both pieces are present.
+    assert system_msg["content"].startswith(TRAILMATE_SYSTEM_PROMPT)
+    assert "<available_skills>" in system_msg["content"]
 
 
 def test_compile_context_returns_chat_history_copy(monkeypatch):
@@ -42,4 +44,4 @@ def test_harness_initializes_with_expected_defaults(monkeypatch):
     assert harness.trajectory_log == []
     assert harness.max_iterations == 10
     assert harness.tool_use == []
-    assert harness.context_manager.max_context_tokens == 3000
+    assert harness.context_manager.max_context_tokens == 32000

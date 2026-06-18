@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date
+from pathlib import Path
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -18,22 +20,55 @@ from openai import OpenAI
 from trailmate.context_manager import ContextManager
 from trailmate.tool_registry import ToolRegistry
 
+# Base identity and behaviour instructions. Per-skill routing instructions are
+# injected dynamically from SKILL.md files at harness construction time so that
+# adding a new skill directory is enough to make it available — no code change
+# required.
 TRAILMATE_SYSTEM_PROMPT = (
     "You are TrailMate, an AI travel companion specializing in Israel. "
-    "You have access to the following tools — use them instead of answering from memory:\n\n"
-    "- `plan_trip`: whenever the user wants to plan, organize, or prepare a trip anywhere "
-    "in Israel — even casually ('I want 3 days in the Golan', 'plan a weekend in Eilat'). "
-    "This runs a full pipeline: trails, restaurants, hotels, attractions, and live weather. "
-    "Always call this for trip planning requests.\n"
-    "- `search_trails`: when the user asks specifically about hiking trails, difficulty, "
-    "distance, or elevation — without asking for a full itinerary.\n"
-    "- `get_weather`: when the user asks only about weather for a location.\n"
-    "- `export_pdf`: when the user asks to save or download an itinerary as a PDF.\n\n"
+    "You have access to tools — use them instead of answering from memory. "
     "Be concise. Prefer specific recommendations over vague advice. "
     "Admit when you don't have information rather than inventing it. "
     "When presenting a trip itinerary, format each day clearly with trail, meals, "
-    "attraction, and weather — and always include GPS coordinates."
+    "attraction, and weather. "
+    "Always present every location as a Google Maps link using this format: "
+    "[📍 Place Name](https://www.google.com/maps?q=LAT,LNG) — "
+    "never show raw coordinates."
 )
+
+# Skills live one level below this directory: <project_root>/.agents/skills/<name>/SKILL.md
+_SKILLS_DIR = Path(__file__).parent.parent.parent / ".agents" / "skills"
+
+
+def _load_skills_block(skills_dir: Path) -> str:
+    """Scan *skills_dir* for SKILL.md files and return an ``<available_skills>`` block.
+
+    Walks one level deep — each immediate subdirectory of *skills_dir* that
+    contains a ``SKILL.md`` is treated as one skill. Skills are sorted by
+    directory name for a stable ordering across runs. Returns an empty string
+    if *skills_dir* doesn't exist or contains no ``SKILL.md`` files, so the
+    caller can safely concatenate the result without a special-case check.
+    """
+    if not skills_dir.is_dir():
+        return ""
+
+    blocks: list[str] = []
+    for skill_dir in sorted(skills_dir.iterdir()):
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_dir.is_dir() or not skill_md.exists():
+            continue
+        content = skill_md.read_text(encoding="utf-8")
+        # Include the skill's path relative to the project root so the LLM
+        # can construct the correct argument to run_script without guessing.
+        rel_path = skill_dir.relative_to(skills_dir.parent.parent)
+        blocks.append(
+            f'<skill name="{skill_dir.name}" path="{rel_path}">\n{content}\n</skill>'
+        )
+
+    if not blocks:
+        return ""
+
+    return "<available_skills>\n" + "\n".join(blocks) + "\n</available_skills>"
 
 
 class AgentHarness:
@@ -50,11 +85,21 @@ class AgentHarness:
         self.client = OpenAI()
         self.model = model
 
+        # Build the system prompt once at startup. The base identity string
+        # is extended with today's date (so relative dates like "tomorrow"
+        # resolve correctly) and a dynamically-scanned <available_skills> block.
+        today_str = date.today().isoformat()
+        skills_block = _load_skills_block(_SKILLS_DIR)
+        date_line = f"Today's date is {today_str}."
+        system_content = TRAILMATE_SYSTEM_PROMPT + "\n\n" + date_line
+        if skills_block:
+            system_content += "\n\n" + skills_block
+
         # Conversation history. Seeded with a single system message so
         # the agent has its identity from turn 1; user/assistant/tool
         # messages are appended as the loop runs.
         self.chat_history: list[dict] = [
-            {"role": "system", "content": TRAILMATE_SYSTEM_PROMPT}
+            {"role": "system", "content": system_content}
         ]
 
         # Low-level audit trail of every raw model response, indexed by
@@ -80,7 +125,7 @@ class AgentHarness:
         # is deliberately low — it's a development trigger so compaction
         # is observable in normal sessions. For real usage, raise to e.g.
         # 32000 (gpt-4o supports up to 128k input tokens).
-        self.context_manager = ContextManager(max_context_tokens=3000)
+        self.context_manager = ContextManager(max_context_tokens=32000)
 
     def run(self, user_prompt: str) -> str:
         """Drive the loop until the model emits a final answer.

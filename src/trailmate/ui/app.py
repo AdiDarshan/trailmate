@@ -103,3 +103,19 @@ if prompt := st.chat_input("Where do you want to travel?"):
                     )
 
     st.session_state.messages.append({"role": "assistant", "content": response, "pdfs": pdfs})
+
+    # ── Debug: tool call log ───────────────────────────────────────────────
+    with st.expander("🔍 Tool calls (debug)", expanded=False):
+        for entry in st.session_state.harness.trajectory_log[-10:]:
+            iteration = entry.get("iteration")
+            msg = entry.get("response", {})
+            tool_calls = msg.get("tool_calls") or []
+            if tool_calls:
+                for tc in tool_calls:
+                    fn = tc.get("function", {})
+                    st.code(
+                        f"[iter {iteration}] {fn.get('name')}({fn.get('arguments')})",
+                        language="text",
+                    )
+            else:
+                st.caption(f"[iter {iteration}] final answer (no tool calls)")

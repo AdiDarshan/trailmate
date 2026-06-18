@@ -73,6 +73,12 @@ class TrailsSkill(BaseAgentSkill):
     def execute(self, inputs: dict) -> dict:
         area = inputs["area"]
         max_trails = inputs.get("max", 5)
+        # IHM search returns hiking route relations when the query includes
+        # "trail" — bare area names ("Galilee") return only place/wiki results.
+        # Try "<area> trail" first; fall back to plain area name if empty.
+        result = _run_script(TRAILS_SCRIPT, [f"{area} trail", "--max", str(max_trails)])
+        if result.get("ok") and result.get("data"):
+            return result
         return _run_script(TRAILS_SCRIPT, [area, "--max", str(max_trails)])
 
     def verify(self, result: dict) -> tuple[bool, str]:
@@ -115,18 +121,26 @@ class WeatherSkill(BaseAgentSkill):
     name = "fetch_weather"
 
     def execute(self, inputs: dict) -> dict:
+        start_date = inputs.get("start_date")
+        if not start_date:
+            # No dates requested — skip weather, assemble without forecast.
+            return {"ok": True, "data": {}}
         area = inputs["area"]
         days = inputs.get("days", 3)
-        return _run_script(WEATHER_SCRIPT, [area, "--days", str(days)])
+        return _run_script(WEATHER_SCRIPT, [area, "--days", str(days), "--start-date", start_date])
 
     def verify(self, result: dict) -> tuple[bool, str]:
         ok, reason = super().verify(result)
         if not ok:
             return True, f"Weather unavailable ({reason}) — proceeding without forecast"
         data = result["data"]
+        if not data:
+            return True, "No start date — weather skipped"
         if "forecast" not in data:
             return True, "Weather data missing forecast — proceeding without"
-        return True, f"Weather forecast for {len(data['forecast'])} days"
+        historical = data.get("historical", False)
+        label = "historical proxy" if historical else "live forecast"
+        return True, f"Weather {label} for {len(data['forecast'])} days"
 
 
 class AssembleSkill(BaseAgentSkill):
@@ -160,16 +174,17 @@ class AssembleSkill(BaseAgentSkill):
             restaurant_dinner = restaurants[(day_idx * 2 + 1) % len(restaurants)] if restaurants else None
             attraction = attractions[day_idx % len(attractions)] if attractions else None
 
-            # Weather adjustment guardrail
+            # Weather adjustment guardrail — only runs when forecast data exists
             weather_note = None
-            if day_weather.get("rain_mm", 0) > 5:
-                weather_note = "Rain expected — consider an indoor alternative"
-                if attraction:
-                    trail = None  # swap trail for attraction on rainy days
-            elif day_weather.get("temp_max_c", 0) > 33:
-                weather_note = "Very hot — start hike early (before 08:00), carry 2L+ water"
-            elif day_weather.get("wind_kmh", 0) > 40:
-                weather_note = "Strong winds — avoid exposed ridge trails"
+            if day_weather:
+                if day_weather.get("rain_mm", 0) > 5:
+                    weather_note = "Rain expected — consider an indoor alternative"
+                    if attraction:
+                        trail = None  # swap trail for attraction on rainy days
+                elif day_weather.get("temp_max_c", 0) > 33:
+                    weather_note = "Very hot — start hike early (before 08:00), carry 2L+ water"
+                elif day_weather.get("wind_kmh", 0) > 40:
+                    weather_note = "Strong winds — avoid exposed ridge trails"
 
             day = {
                 "day": day_idx + 1,
@@ -202,7 +217,8 @@ class AssembleSkill(BaseAgentSkill):
 
 # ── Pipeline entry point ───────────────────────────────────────────────────────
 
-def run(area: str, days: int, dry_run: bool = False, log_path: Path | None = None) -> dict:
+def run(area: str, days: int, start_date: str | None = None,
+        dry_run: bool = False, log_path: Path | None = None) -> dict:
     # Guardrail check before touching any APIs
     valid, reason = validate_inputs(area, days)
     if not valid:
@@ -235,7 +251,7 @@ def run(area: str, days: int, dry_run: bool = False, log_path: Path | None = Non
         ("fetch_places_restaurant", {"area": area, "type": "restaurant", "max": days * 2}),
         ("fetch_places_hotel",      {"area": area, "type": "hotel", "max": 3}),
         ("fetch_places_attraction", {"area": area, "type": "attraction", "max": days * 2}),
-        ("fetch_weather",           {"area": area, "days": days}),
+        ("fetch_weather",           {"area": area, "days": days, "start_date": start_date}),
         ("assemble_itinerary",      {"area": area, "days": days, "context": state.global_context}),
     ]
 
@@ -267,6 +283,7 @@ if __name__ == "__main__":
 
     area = args[0]
     days = 3
+    start_date = None
     dry_run = False
     log_path = None
 
@@ -274,6 +291,8 @@ if __name__ == "__main__":
     while i < len(args):
         if args[i] == "--days" and i + 1 < len(args):
             days = int(args[i + 1]); i += 2
+        elif args[i] == "--start-date" and i + 1 < len(args):
+            start_date = args[i + 1]; i += 2
         elif args[i] == "--dry-run":
             dry_run = True; i += 1
         elif args[i] == "--log" and i + 1 < len(args):
@@ -281,6 +300,6 @@ if __name__ == "__main__":
         else:
             i += 1
 
-    result = run(area, days, dry_run=dry_run, log_path=log_path)
+    result = run(area, days, start_date=start_date, dry_run=dry_run, log_path=log_path)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     sys.exit(0 if result.get("status") == "completed" else 1)

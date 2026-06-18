@@ -31,13 +31,19 @@ source .venv/bin/activate
 Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+pip install -e ".[dev]"
 ```
 
-### Run
+### Run (CLI)
 
 ```bash
 python -m trailmate
+```
+
+### Run (UI)
+
+```bash
+streamlit run src/trailmate/ui/app.py
 ```
 
 ### Run Tests
@@ -51,14 +57,17 @@ pytest
 ```
 TrailMate/
 ├── src/
-│   └── trailmate/        # Main package
+│   └── trailmate/
+│       ├── ui/
+│       │   └── app.py          # Streamlit chat UI
 │       ├── __init__.py
-│       ├── __main__.py   # Entry point: python -m trailmate
-│       └── agent.py      # AI agent core
-├── tests/                # Test suite
-├── requirements.txt      # Runtime dependencies
-├── requirements-dev.txt  # Development dependencies
-├── pyproject.toml        # Project configuration
+│       ├── __main__.py         # Entry point: python -m trailmate
+│       ├── agent_harness.py    # Bounded OpenAI chat loop
+│       ├── context_manager.py  # Token accounting + compaction
+│       └── tool_registry.py    # Tool definitions + dispatch
+├── tests/
+├── docs/
+├── pyproject.toml              # Dependencies + project config
 └── README.md
 ```
 

@@ -1,6 +1,0 @@
-openai
-python-dotenv
-reportlab
-requests
-tiktoken
-streamlit

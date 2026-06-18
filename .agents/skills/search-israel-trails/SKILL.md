@@ -32,6 +32,11 @@ No API keys required.
    ```
    The script handles all three API calls and returns a JSON array of trail objects.
 
+   **Query tips:** IHM's search returns hiking route relations when the query includes "trail".
+   Bare area names ("Galilee", "Carmel") return place/Wikipedia results — no trails.
+   Always append "trail" to the area: `"Galilee trail"`, `"Carmel trail"`, `"Negev trail"`.
+   For a specific named route use the full name: `"Israel National Trail"`, `"Arbel trail"`.
+
 2. **Validate output** against `assets/trail.schema.json`.
    - Fields not in the schema must be dropped.
    - Missing optional fields should be omitted — never fabricated or shown as "N/A".
@@ -40,19 +45,23 @@ No API keys required.
    it could collect. Present partial results — name and location are always enough
    to be useful.
 
-4. **Present results** using this format per trail (only include fields present):
+4. **Present results** using this format per trail (only include fields that are present in the data):
    ```
-   🥾 [name]
-      Area: [display_name]
-      Color marking: [trail_color]
-      Network: [local / regional / national]
-      Distance: [distance_km] km
-      Elevation gain: [elevation_gain_m] m
-      Difficulty: [easy / moderate / hard]
-      Ref: [ref]
-      [description if present]
-      Location: [lat, lng]
+   🥾 **[name]**
+      📍 Trailhead: [📍 Start here](https://www.google.com/maps?q=LAT,LNG)   ← use trailhead_coords.lat/lng
+      🗺️ From → To: [trailhead_from] → [trailhead_to]
+      📏 Distance: [distance_km] km
+      ⏱️ Estimated time: [estimated_duration]
+      🚗 Cars: [car_logistics]   ← e.g. "loop — 1 car" or "linear — 2 cars or shuttle"
+      📈 Elevation: ↑[elevation_gain_m] m  ↓[elevation_loss_m] m
+      💪 Difficulty: [difficulty]
+      🎨 Trail marking: [trail_color] (color of the marked trail blazes)
+      🌐 Network: [network]
+      📝 [description]
+      🔗 [Website](website)
    ```
+
+   Always link the **trailhead coordinates** (`trailhead_coords.lat`, `trailhead_coords.lng`) — not the general area center. This is the actual parking / start point.
 
 5. **After results**, offer to:
    - Check the weather at the trail location (`get_weather` tool if available)

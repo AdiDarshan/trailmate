@@ -31,8 +31,11 @@ def get_json(url: str) -> object:
 
 
 def post_json(url: str, body: str) -> object:
-    data = body.encode()
-    req = urllib.request.Request(url, data=data, method="POST")
+    # Overpass API expects form-encoded body: data=<query>
+    encoded = urllib.parse.urlencode({"data": body}).encode()
+    req = urllib.request.Request(url, data=encoded, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    req.add_header("User-Agent", "TrailMate/1.0 (travel planning)")
     with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
         return json.loads(r.read().decode())
 
@@ -43,13 +46,23 @@ def ihm_search(query: str, language: str, max_results: int) -> list[dict]:
     encoded = urllib.parse.quote(query)
     url = f"{IHM_BASE}/search/{encoded}?language={language}"
     results = get_json(url)
-    return [r for r in results if "hike" in r.get("icon", "")][:max_results]
+    # Only keep results that are OSM relations — these are named trail routes.
+    # way_ results are often short footpaths or streets; node_ results are
+    # POIs/localities that can't be enriched with geometry or trail tags.
+    return [
+        r for r in results
+        if "hike" in r.get("icon", "") and r.get("id", "").startswith("relation_")
+    ][:max_results]
 
 
 # ── Step 2: Overpass tag enrichment ──────────────────────────────────────────
 
-def overpass_tags(rel_id: str) -> dict:
-    data = f"[out:json];relation({rel_id});out tags;"
+def overpass_tags(osm_type: str, osm_id: str) -> dict:
+    """Fetch OSM tags for a relation or way."""
+    if osm_type == "relation":
+        data = f"[out:json];relation({osm_id});out tags;"
+    else:
+        data = f"[out:json];way({osm_id});out tags;"
     resp = post_json(OVERPASS_URL, data)
     elements = resp.get("elements", [])
     return elements[0].get("tags", {}) if elements else {}
@@ -66,13 +79,21 @@ def parse_color(osmc_symbol: str) -> str:
 
 # ── Step 3a: Overpass geometry ────────────────────────────────────────────────
 
-def overpass_geometry(rel_id: str) -> list[tuple[float, float]]:
-    data = f"[out:json];relation({rel_id});way(r);out geom;"
-    resp = post_json(OVERPASS_URL, data)
+def overpass_geometry(osm_type: str, osm_id: str) -> list[tuple[float, float]]:
+    """Fetch ordered coordinates for a relation or way."""
     coords = []
-    for way in resp.get("elements", []):
-        for node in way.get("geometry", []):
-            coords.append((node["lat"], node["lon"]))
+    if osm_type == "relation":
+        data = f"[out:json];relation({osm_id});way(r);out geom;"
+        resp = post_json(OVERPASS_URL, data)
+        for way in resp.get("elements", []):
+            for node in way.get("geometry", []):
+                coords.append((node["lat"], node["lon"]))
+    else:
+        data = f"[out:json];way({osm_id});out geom;"
+        resp = post_json(OVERPASS_URL, data)
+        for element in resp.get("elements", []):
+            for node in element.get("geometry", []):
+                coords.append((node["lat"], node["lon"]))
     return coords
 
 
@@ -93,13 +114,16 @@ def total_distance_km(coords: list[tuple[float, float]]) -> float:
 
 # ── Step 3c: IHM elevation ────────────────────────────────────────────────────
 
-def elevation_gain(coords: list[tuple[float, float]]) -> float:
+def elevation_profile(coords: list[tuple[float, float]]) -> tuple[float, float]:
+    """Return (gain_m, loss_m) from sampled elevation data."""
     step = max(1, len(coords) // 20)
     sample = coords[::step][:20]
     points_param = "|".join(f"{lat},{lon}" for lat, lon in sample)
     url = f"{IHM_BASE}/elevation?points={urllib.parse.quote(points_param)}"
     elevs = get_json(url)
-    return round(sum(max(0.0, elevs[i + 1] - elevs[i]) for i in range(len(elevs) - 1)))
+    gain = round(sum(max(0.0, elevs[i + 1] - elevs[i]) for i in range(len(elevs) - 1)))
+    loss = round(sum(max(0.0, elevs[i] - elevs[i + 1]) for i in range(len(elevs) - 1)))
+    return gain, loss
 
 
 # ── Step 3d: Difficulty ───────────────────────────────────────────────────────
@@ -113,6 +137,39 @@ def classify_difficulty(distance_km: float, gain_m: float) -> str:
     return "hard"
 
 
+# ── Step 3e: Duration estimate (Naismith's rule) ─────────────────────────────
+
+def estimate_duration(distance_km: float, gain_m: float) -> str:
+    """Naismith: 4 km/h walking pace + 1 h per 600 m ascent."""
+    hours_raw = distance_km / 4.0 + gain_m / 600.0
+    # Round to nearest half-hour
+    half_hours = round(hours_raw * 2)
+    hours = half_hours // 2
+    mins = 30 if half_hours % 2 else 0
+    if hours == 0:
+        return f"{mins or 30} min"
+    if mins:
+        return f"{hours}h {mins}min"
+    return f"{hours}h"
+
+
+# ── Step 3f: Car logistics ────────────────────────────────────────────────────
+
+def car_logistics(tags: dict, coords: list[tuple[float, float]]) -> str:
+    """Determine whether the trail is a loop (1 car) or linear (2 cars/shuttle)."""
+    roundtrip = tags.get("roundtrip", "").lower()
+    if roundtrip == "yes":
+        return "loop — 1 car"
+    if roundtrip == "no":
+        return "linear — 2 cars or shuttle"
+    # Heuristic: if first and last coordinate are within 500 m, treat as loop
+    if len(coords) >= 2 and haversine(coords[0], coords[-1]) < 500:
+        return "loop — 1 car"
+    if coords:
+        return "linear — 2 cars or shuttle"
+    return "unknown"
+
+
 # ── Main flow ─────────────────────────────────────────────────────────────────
 
 def enrich(trail: dict) -> dict:
@@ -122,15 +179,19 @@ def enrich(trail: dict) -> dict:
         "location": trail.get("location"),
     }
 
-    osm_id = trail.get("id", "")
-    if not osm_id.startswith("relation_"):
-        return info
+    raw_id = trail.get("id", "")
+    if raw_id.startswith("relation_"):
+        osm_type, osm_id = "relation", raw_id.replace("relation_", "")
+    elif raw_id.startswith("way_"):
+        osm_type, osm_id = "way", raw_id.replace("way_", "")
+    else:
+        return info  # node or unknown — not enrichable via Overpass
 
-    rel_id = osm_id.replace("relation_", "")
+    tags: dict = {}
 
     # Step 2: tags
     try:
-        tags = overpass_tags(rel_id)
+        tags = overpass_tags(osm_type, osm_id)
         color = parse_color(tags.get("osmc:symbol", ""))
         if color:
             info["trail_color"] = color
@@ -141,26 +202,65 @@ def enrich(trail: dict) -> dict:
             info["ref"] = tags["ref"]
         if tags.get("description"):
             info["description"] = tags["description"]
+        # Start / end named locations
+        if tags.get("from"):
+            info["trailhead_from"] = tags["from"]
+        if tags.get("to"):
+            info["trailhead_to"] = tags["to"]
+        # Distance from tag
         if tags.get("distance"):
             try:
                 info["distance_km"] = float(tags["distance"].replace("km", "").strip())
             except ValueError:
                 pass
+        # Elevation from tags (more reliable than computed when present)
+        if tags.get("ascent"):
+            try:
+                info["elevation_gain_m"] = int(tags["ascent"])
+            except ValueError:
+                pass
+        if tags.get("descent"):
+            try:
+                info["elevation_loss_m"] = int(tags["descent"])
+            except ValueError:
+                pass
+        if tags.get("operator"):
+            info["operator"] = tags["operator"]
+        if tags.get("website") or tags.get("url"):
+            info["website"] = tags.get("website") or tags.get("url")
     except Exception:
         pass
 
-    # Step 3: geometry + elevation (only if distance not already known)
-    if "distance_km" not in info:
-        try:
-            coords = overpass_geometry(rel_id)
-            if len(coords) >= 2:
-                dist = total_distance_km(coords)
-                info["distance_km"] = dist
-                gain = elevation_gain(coords)
+    # Step 3: geometry + elevation
+    coords: list[tuple[float, float]] = []
+    try:
+        coords = overpass_geometry(osm_type, osm_id)
+        if coords:
+            # Trailhead = first coordinate of the route
+            info["trailhead_coords"] = {"lat": round(coords[0][0], 6), "lng": round(coords[0][1], 6)}
+
+        if "distance_km" not in info and len(coords) >= 2:
+            info["distance_km"] = total_distance_km(coords)
+
+        if ("elevation_gain_m" not in info or "elevation_loss_m" not in info) and len(coords) >= 2:
+            gain, loss = elevation_profile(coords)
+            if "elevation_gain_m" not in info:
                 info["elevation_gain_m"] = gain
-                info["difficulty"] = classify_difficulty(dist, gain)
-        except Exception:
-            pass
+            if "elevation_loss_m" not in info:
+                info["elevation_loss_m"] = loss
+    except Exception:
+        pass
+
+    # Derived fields (computed from whatever distance/elevation we have)
+    dist = info.get("distance_km", 0)
+    gain = info.get("elevation_gain_m", 0)
+
+    if dist:
+        if "difficulty" not in info:
+            info["difficulty"] = classify_difficulty(dist, gain)
+        info["estimated_duration"] = estimate_duration(dist, gain)
+
+    info["car_logistics"] = car_logistics(tags, coords)
 
     return info
 

@@ -8,17 +8,20 @@ Each tool entry is a pair of:
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import math
-import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Callable
 from xml.sax.saxutils import escape as xml_escape
 
-import requests
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+
+# Absolute path to the project root — used by run_script and read_file to set
+# the working directory and to constrain file access to the project tree.
+_PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
 class ToolRegistry:
@@ -86,11 +89,13 @@ class ToolRegistry:
         """Register the project's built-in tools.
 
         Currently:
-        - `export_pdf`    — write text to a PDF on local disk via ReportLab.
-        - `get_weather`   — fetch current weather for a city via OpenWeatherMap.
-        - `search_trails` — search Israeli hiking trails via Israel Hiking Map,
-                            enriched with OSM tags (Overpass) and computed
-                            distance + elevation gain (IHM elevation API).
+        - `export_pdf`   — write text to a PDF on local disk via ReportLab.
+        - `run_script`   — execute a skill script via subprocess and return stdout.
+        - `read_file`    — read a file from the project tree (for on-demand refs).
+
+        Domain-specific tools (weather, trails, trip planning) are no longer
+        registered here — the agent invokes them by calling `run_script` with
+        the appropriate skill script path as instructed in <available_skills>.
         """
         self.register(
             name="export_pdf",
@@ -116,377 +121,178 @@ class ToolRegistry:
         self.register(
             name="get_weather",
             description=(
-                "Fetches the current weather for a given city. "
-                "Returns temperature (°C), feels-like temperature, humidity, "
-                "wind speed, and a short condition description. "
-                "Optionally accepts a two-letter country code to disambiguate "
-                "cities with the same name (e.g. 'Toledo,ES' vs 'Toledo,US')."
+                "Fetch a weather forecast for any location and date. "
+                "Use proactively whenever dates and outdoor activity are involved: "
+                "before recommending a trail, when the user mentions a trip date, "
+                "or when checking whether conditions suit a planned activity. "
+                "Within 16 days of today returns a live forecast; further out "
+                "returns a historical proxy (same calendar period, previous year) "
+                "flagged with 'historical: true' — tell the user when this applies."
             ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "city": {
+                    "location": {
                         "type": "string",
-                        "description": (
-                            "City name, optionally with ISO 3166 country code, "
-                            "e.g. 'Lisbon', 'Paris,FR', 'Springfield,US'."
-                        ),
+                        "description": "City or region in Israel, e.g. 'Tel Aviv', 'Golan Heights'.",
                     },
-                    "units": {
-                        "type": "string",
-                        "enum": ["metric", "imperial"],
-                        "description": (
-                            "Unit system for temperature and wind speed. "
-                            "'metric' → °C / m/s (default); 'imperial' → °F / mph."
-                        ),
-                    },
-                },
-                "required": ["city"],
-            },
-            func=_get_weather,
-        )
-        self.register(
-            name="plan_trip",
-            description=(
-                "Plans a complete day-by-day trip itinerary anywhere in Israel. "
-                "Runs a full pipeline: searches hiking trails, restaurants, hotels, "
-                "attractions, and live weather forecast, then assembles them into a "
-                "structured day-by-day schedule with GPS coordinates. "
-                "Use whenever the user asks to plan a trip, visit, or travel anywhere "
-                "in Israel — even casually ('I want 3 days in the Golan'). "
-                "Prefer this over answering from memory."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "area": {
+                    "date": {
                         "type": "string",
                         "description": (
-                            "The area or region in Israel, e.g. 'Golan Heights', "
-                            "'Eilat', 'Galilee', 'Negev'."
+                            "Trip start date as YYYY-MM-DD. "
+                            "Omit to get today's forecast."
                         ),
                     },
                     "days": {
                         "type": "integer",
-                        "description": "Number of days for the trip (1–14). Defaults to 3.",
+                        "description": "Number of days to forecast (1–16). Defaults to 3.",
                     },
                 },
-                "required": ["area"],
+                "required": ["location"],
             },
-            func=_plan_trip,
+            func=_get_weather,
         )
         self.register(
-            name="search_trails",
+            name="run_script",
             description=(
-                "Searches for hiking trails in Israel by name or area. "
-                "Returns trail name, location, color marking, network level, "
-                "distance (km), elevation gain (m), and difficulty rating. "
-                "Data is sourced from Israel Hiking Map (OpenStreetMap), "
-                "enriched with OSM tags via Overpass, and computed geometry "
-                "via the IHM routing and elevation APIs. No API key required."
+                "Run a shell command from the project root and return its stdout, "
+                "stderr, and return code. Use this to execute skill scripts exactly "
+                "as instructed in <available_skills> — for example: "
+                "`python .agents/skills/weather-extractor/scripts/extract.py 'Tel Aviv'`. "
+                "Never reimplement what a skill script already does."
             ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "query": {
+                    "command": {
                         "type": "string",
                         "description": (
-                            "Trail or area name to search for, e.g. "
-                            "'Carmel', 'Israel National Trail', 'Ein Gedi'."
+                            "Shell command to run, relative to project root. "
+                            "Example: \"python .agents/skills/weather-extractor/scripts/extract.py 'Tel Aviv'\""
                         ),
                     },
-                    "language": {
+                },
+                "required": ["command"],
+            },
+            func=_run_script,
+        )
+        self.register(
+            name="read_file",
+            description=(
+                "Read a file from the project tree and return its text content. "
+                "Use for on-demand loading of skill reference files — for example "
+                "`.agents/skills/weather-extractor/references/field_spec.md` when "
+                "a field is missing or ambiguous. Do not load reference files on "
+                "every run; only fetch them when needed."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {
                         "type": "string",
-                        "enum": ["en", "he"],
-                        "description": "Language for trail names. Defaults to 'en'.",
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "Maximum number of trails to return (1–5). Defaults to 3.",
+                        "description": (
+                            "Path relative to project root. "
+                            "Example: \".agents/skills/weather-extractor/references/field_spec.md\""
+                        ),
                     },
                 },
-                "required": ["query"],
+                "required": ["path"],
             },
-            func=_search_trails,
+            func=_read_file,
         )
 
 
-def _plan_trip(args: dict) -> dict:
-    """Trigger the WorkflowEngine pipeline for full trip planning.
+def _run_script(args: dict) -> dict:
+    """Run a shell command from the project root and return stdout/stderr/returncode.
 
-    Dynamically imports run_pipeline from the skills directory so the
-    tool_registry has no hard import-time dependency on the pipeline.
-    Returns the pipeline's JSON output directly — the LLM formats it for the user.
+    `shell=True` is intentional — skill scripts are invoked exactly as written
+    in their SKILL.md (e.g. `python scripts/extract.py "Tel Aviv"`). cwd is
+    pinned to the project root so relative paths in commands resolve correctly.
+    A 30-second timeout prevents runaway scripts from blocking the agent loop.
     """
-    area = args.get("area", "").strip()
-    days = int(args.get("days", 3))
-
-    pipeline_path = (
-        Path(__file__).parent.parent.parent
-        / ".agents/skills/plan-israel-trip/scripts/run_pipeline.py"
-    )
-
+    command = args.get("command", "").strip()
+    if not command:
+        return {"status": "error", "message": "command is required"}
     try:
-        spec = importlib.util.spec_from_file_location("run_pipeline", pipeline_path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module.run(area, days)
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(_PROJECT_ROOT),
+        )
+        return {
+            "status": "success" if result.returncode == 0 else "error",
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode,
+        }
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "message": "Script timed out after 30s"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+def _read_file(args: dict) -> dict:
+    """Read a file from the project tree and return its text content.
+
+    Resolves *path* relative to the project root and checks that the resolved
+    absolute path still lives inside the project root before reading, preventing
+    directory-traversal attacks (e.g. `../../etc/passwd`).
+    """
+    path = args.get("path", "").strip()
+    if not path:
+        return {"status": "error", "message": "path is required"}
+    try:
+        full_path = (_PROJECT_ROOT / path).resolve()
+        if not str(full_path).startswith(str(_PROJECT_ROOT.resolve())):
+            return {"status": "error", "message": "Access denied: path outside project root"}
+        content = full_path.read_text(encoding="utf-8")
+        return {"status": "success", "content": content}
+    except FileNotFoundError:
+        return {"status": "error", "message": f"File not found: {path}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+
+_WEATHER_SCRIPT = _PROJECT_ROOT / ".agents" / "skills" / "plan-israel-trip" / "scripts" / "get_weather.py"
 
 
 def _get_weather(args: dict) -> dict:
-    """Fetch current weather from OpenWeatherMap's free /weather endpoint.
+    """Call get_weather.py and return its parsed JSON output.
 
-    Requires OPENWEATHERMAP_API_KEY in the environment (or a .env file
-    loaded by the harness). Returns a flat dict the LLM can read back
-    directly, or {"status": "error", "message": ...} on any failure.
-
-    API docs: https://openweathermap.org/current
+    Delegates entirely to the skill script so the tool stays a thin wrapper —
+    no weather logic lives here. The script handles geocoding, forecast vs.
+    historical proxy selection, and field normalisation.
     """
-    api_key = os.getenv("OPENWEATHERMAP_API_KEY")
-    if not api_key:
-        return {
-            "status": "error",
-            "message": (
-                "OPENWEATHERMAP_API_KEY is not set. "
-                "Add it to your .env file to use the weather tool."
-            ),
-        }
+    location = args.get("location", "").strip()
+    if not location:
+        return {"status": "error", "message": "location is required"}
 
-    city = args.get("city", "").strip()
-    if not city:
-        return {"status": "error", "message": "The 'city' argument is required."}
+    cmd = [sys.executable, str(_WEATHER_SCRIPT), location]
 
-    units = args.get("units", "metric")
+    date = args.get("date", "").strip()
+    if date:
+        cmd += ["--start-date", date]
+
+    days = args.get("days", 3)
+    cmd += ["--days", str(max(1, min(16, int(days))))]
 
     try:
-        response = requests.get(
-            "https://api.openweathermap.org/data/2.5/weather",
-            params={"q": city, "appid": api_key, "units": units},
-            timeout=10,
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, cwd=str(_PROJECT_ROOT)
         )
-
-        if response.status_code == 401:
-            return {"status": "error", "message": "Invalid OpenWeatherMap API key."}
-        if response.status_code == 404:
-            return {"status": "error", "message": f"City not found: '{city}'."}
-        response.raise_for_status()
-
-        data = response.json()
-        unit_label = "°C" if units == "metric" else "°F"
-        speed_label = "m/s" if units == "metric" else "mph"
-
-        return {
-            "status": "success",
-            "city": data["name"],
-            "country": data["sys"]["country"],
-            "condition": data["weather"][0]["description"],
-            "temperature": f"{data['main']['temp']}{unit_label}",
-            "feels_like": f"{data['main']['feels_like']}{unit_label}",
-            "humidity": f"{data['main']['humidity']}%",
-            "wind_speed": f"{data['wind']['speed']} {speed_label}",
-        }
-    except requests.exceptions.Timeout:
-        return {"status": "error", "message": "Weather API request timed out."}
-    except Exception as e:
+        data = json.loads(result.stdout)
+        if result.returncode != 0:
+            return {"status": "error", "message": data.get("error", result.stderr)}
+        data["status"] = "success"
+        return data
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "message": "Weather script timed out"}
+    except (json.JSONDecodeError, Exception) as e:
         return {"status": "error", "message": str(e)}
-
-
-def _search_trails(args: dict) -> dict:
-    """Three-API flow for Israeli hiking trail search.
-
-    Step 1 — Israel Hiking Map search:
-        GET /api/search/{term}?language=en
-        Returns POIs/trails; we keep only entries with icon "icon-hike".
-
-    Step 2 — Overpass tag enrichment (OSM relations only):
-        POST https://overpass-api.de/api/interpreter
-        Query: [out:json];relation({id});out tags;
-        Yields: trail color, network level, ref number, description.
-
-    Step 3 — Geometry + elevation (when distance tag absent):
-        POST Overpass for way geometry: relation({id});way(r);out geom;
-        Compute distance via Haversine across all nodes.
-        Sample up to 20 points, call IHM /api/elevation to get elevations.
-        Sum positive deltas → elevation gain → difficulty label.
-
-    Returns {"status": "success", "count": N, "trails": [...]}.
-    Each trail dict contains whichever fields were available; missing
-    fields are simply omitted rather than returned as None.
-    """
-    query = args.get("query", "").strip()
-    language = args.get("language", "en")
-    max_results = min(int(args.get("max_results", 3)), 5)
-
-    if not query:
-        return {"status": "error", "message": "The 'query' argument is required."}
-
-    # ── Step 1: Israel Hiking Map search ────────────────────────────────────
-    try:
-        search_resp = requests.get(
-            f"https://israelhiking.osm.org.il/api/search/{requests.utils.quote(query)}",
-            params={"language": language},
-            timeout=10,
-        )
-        search_resp.raise_for_status()
-        results = search_resp.json()
-    except Exception as e:
-        return {"status": "error", "message": f"Trail search failed: {e}"}
-
-    # Keep only hiking trails (icon-hike), cap at max_results.
-    trails = [r for r in results if "hike" in r.get("icon", "")][:max_results]
-
-    if not trails:
-        return {
-            "status": "success",
-            "count": 0,
-            "trails": [],
-            "message": f"No hiking trails found for '{query}'.",
-        }
-
-    enriched = []
-    for trail in trails:
-        info: dict[str, Any] = {
-            "name": trail.get("title"),
-            "display_name": trail.get("displayName"),
-            "location": trail.get("location"),
-        }
-
-        osm_id = trail.get("id", "")
-
-        if osm_id.startswith("relation_"):
-            rel_id = osm_id.replace("relation_", "")
-
-            # ── Step 2: Overpass tag enrichment ─────────────────────────────
-            try:
-                tag_resp = requests.post(
-                    "https://overpass-api.de/api/interpreter",
-                    data=f"[out:json];relation({rel_id});out tags;",
-                    timeout=15,
-                )
-                tag_resp.raise_for_status()
-                elements = tag_resp.json().get("elements", [])
-                if elements:
-                    tags = elements[0].get("tags", {})
-                    color = _parse_trail_color(tags.get("osmc:symbol", ""))
-                    if color:
-                        info["trail_color"] = color
-                    network_map = {"lwn": "local", "rwn": "regional", "nwn": "national"}
-                    if tags.get("network"):
-                        info["network"] = network_map.get(tags["network"], tags["network"])
-                    if tags.get("ref"):
-                        info["ref"] = tags["ref"]
-                    if tags.get("description"):
-                        info["description"] = tags["description"]
-                    if tags.get("distance"):
-                        # OSM distance tags are sometimes "12 km" or just "12"
-                        raw = tags["distance"].replace("km", "").strip()
-                        try:
-                            info["distance_km"] = float(raw)
-                        except ValueError:
-                            pass
-            except Exception:
-                pass  # Tag enrichment is best-effort; continue without it.
-
-            # ── Step 3: Geometry → distance + elevation gain ─────────────────
-            # Only run if we still don't have a distance from OSM tags.
-            if "distance_km" not in info:
-                try:
-                    geom_resp = requests.post(
-                        "https://overpass-api.de/api/interpreter",
-                        data=f"[out:json];relation({rel_id});way(r);out geom;",
-                        timeout=20,
-                    )
-                    geom_resp.raise_for_status()
-                    ways = geom_resp.json().get("elements", [])
-
-                    # Collect every node coordinate across all ways.
-                    all_coords: list[tuple[float, float]] = []
-                    for way in ways:
-                        for node in way.get("geometry", []):
-                            all_coords.append((node["lat"], node["lon"]))
-
-                    if len(all_coords) >= 2:
-                        # Total trail length via Haversine.
-                        total_m = sum(
-                            _haversine(all_coords[i], all_coords[i + 1])
-                            for i in range(len(all_coords) - 1)
-                        )
-                        info["distance_km"] = round(total_m / 1000, 1)
-
-                        # Sample up to 20 evenly-spaced points for elevation.
-                        step = max(1, len(all_coords) // 20)
-                        sample = all_coords[::step][:20]
-                        points_param = "|".join(f"{lat},{lon}" for lat, lon in sample)
-
-                        elev_resp = requests.get(
-                            "https://israelhiking.osm.org.il/api/elevation",
-                            params={"points": points_param},
-                            timeout=10,
-                        )
-                        elev_resp.raise_for_status()
-                        elevations: list[float] = elev_resp.json()
-
-                        if len(elevations) >= 2:
-                            gain = sum(
-                                max(0.0, elevations[i + 1] - elevations[i])
-                                for i in range(len(elevations) - 1)
-                            )
-                            info["elevation_gain_m"] = round(gain)
-                            info["difficulty"] = _classify_difficulty(
-                                info["distance_km"], gain
-                            )
-                except Exception:
-                    pass  # Geometry enrichment is best-effort.
-
-        enriched.append(info)
-
-    return {"status": "success", "count": len(enriched), "trails": enriched}
-
-
-# ── Trail helper functions ───────────────────────────────────────────────────
-
-def _parse_trail_color(osmc_symbol: str) -> str:
-    """Extract a human-readable color from an osmc:symbol tag value.
-
-    The tag format is "foreground:background:overlay[:text]", e.g.
-    "orange:orange:white_right:blue_stripe". We look for a known color
-    name in any colon-separated segment.
-    """
-    known = {"red", "blue", "green", "black", "orange", "white", "yellow"}
-    for part in osmc_symbol.split(":"):
-        # A segment may be "white_right" — check the first word.
-        word = part.split("_")[0]
-        if word in known:
-            return word
-    return ""
-
-
-def _haversine(p1: tuple[float, float], p2: tuple[float, float]) -> float:
-    """Return the great-circle distance in metres between two (lat, lon) points."""
-    R = 6_371_000  # Earth radius in metres
-    lat1, lon1 = math.radians(p1[0]), math.radians(p1[1])
-    lat2, lon2 = math.radians(p2[0]), math.radians(p2[1])
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
-    return R * 2 * math.asin(math.sqrt(a))
-
-
-def _classify_difficulty(distance_km: float, elevation_gain_m: float) -> str:
-    """Return easy / moderate / hard based on distance and elevation gain.
-
-    Uses a simple weighted score: every 100 m of gain counts as 1 km.
-    This mirrors common Israeli trail grading conventions.
-    """
-    score = distance_km + elevation_gain_m / 100
-    if score < 5:
-        return "easy"
-    elif score < 15:
-        return "moderate"
-    else:
-        return "hard"
 
 
 def _export_pdf(args: dict) -> dict:
