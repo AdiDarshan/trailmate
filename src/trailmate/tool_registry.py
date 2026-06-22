@@ -208,28 +208,34 @@ def _run_script(args: dict) -> dict:
     `shell=True` is intentional — skill scripts are invoked exactly as written
     in their SKILL.md (e.g. `python scripts/extract.py "Tel Aviv"`). cwd is
     pinned to the project root so relative paths in commands resolve correctly.
-    A 30-second timeout prevents runaway scripts from blocking the agent loop.
+    A 180-second timeout prevents runaway scripts from blocking the agent loop.
+    The pipeline makes multiple sequential Overpass API calls which can take 90s+.
+    Uses Popen instead of subprocess.run to avoid the post-kill communicate() hang.
     """
     command = args.get("command", "").strip()
     if not command:
         return {"status": "error", "message": "command is required"}
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             command,
             shell=True,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=30,
             cwd=str(_PROJECT_ROOT),
         )
+        try:
+            stdout, stderr = proc.communicate(timeout=180)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            return {"status": "error", "message": "Script timed out after 180s"}
         return {
-            "status": "success" if result.returncode == 0 else "error",
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "returncode": result.returncode,
+            "status": "success" if proc.returncode == 0 else "error",
+            "stdout": stdout,
+            "stderr": stderr,
+            "returncode": proc.returncode,
         }
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "message": "Script timed out after 30s"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

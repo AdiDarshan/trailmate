@@ -45,25 +45,41 @@ No API keys required.
    it could collect. Present partial results — name and location are always enough
    to be useful.
 
-4. **Present results** using this format per trail (only include fields that are present in the data):
+4. **Enrich with tiuli.com** — after getting IHM results, always call the tiuli enrichment
+   script for each trail. Pass the Hebrew trail name (from `name` or `display_name`):
+   ```bash
+   python .agents/skills/fetch-tiuli-trail/scripts/get_tiuli_trail.py "<Hebrew trail name>"
    ```
-   🥾 **[name]**
-      📍 Trailhead: [📍 Start here](https://www.google.com/maps?q=LAT,LNG)   ← use trailhead_coords.lat/lng
-      🗺️ From → To: [trailhead_from] → [trailhead_to]
-      📏 Distance: [distance_km] km
-      ⏱️ Estimated time: [estimated_duration]
-      🚗 Cars: [car_logistics]   ← e.g. "loop — 1 car" or "linear — 2 cars or shuttle"
-      📈 Elevation: ↑[elevation_gain_m] m  ↓[elevation_loss_m] m
-      💪 Difficulty: [difficulty]
-      🎨 Trail marking: [trail_color] (color of the marked trail blazes)
-      🌐 Network: [network]
-      📝 [description]
-      🔗 [Website](website)
+   On success, merge these tiuli fields into the trail card:
+   - `waze_link` → 🧭 ניווט ל-Waze (clickable link — essential for getting there)
+   - `description_he` → replace the English OSM description
+   - `difficulty_he` → replaces OSM difficulty label
+   - `duration_he` → supplements `estimated_duration`
+   - `trail_map_image` → 🗺️ מפת המסלול
+   - `tiuli_url` → 🔗 פרטים נוספים באתר טיולי
+
+   On failure (`"error"` key), skip silently and present only IHM data.
+
+5. **Present results** using this format (include only fields that are present):
+   ```
+   🥾 **[name_he or name]**
+      🧭 [ניווט ל-Waze](waze_link)
+      📍 נקודת התחלה: [📍 פתח במפות](https://www.google.com/maps?q=LAT,LNG)
+      🗺️ מ → עד: [trailhead_from] → [trailhead_to]
+      📏 מרחק: [distance_km] ק"מ
+      ⏱️ משך: [duration_he or estimated_duration]
+      🚗 רכבים: [car_logistics]
+      📈 עלייה: ↑[elevation_gain_m] מ'  ↓[elevation_loss_m] מ'
+      💪 קושי: [difficulty_he or difficulty]
+      🎨 סימון: [trail_color]
+      📝 [description_he or description]
+      🗺️ [מפת המסלול](trail_map_image)
+      🔗 [פרטים נוספים באתר טיולי](tiuli_url)
    ```
 
-   Always link the **trailhead coordinates** (`trailhead_coords.lat`, `trailhead_coords.lng`) — not the general area center. This is the actual parking / start point.
+   Always link the **trailhead coordinates** — not the general area center.
 
-5. **After results**, offer to:
+6. **After results**, offer to:
    - Check the weather at the trail location (`get_weather` tool if available)
    - Export to PDF
    - Build a day-trip itinerary around the trail

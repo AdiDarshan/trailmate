@@ -65,6 +65,31 @@ User: "Plan 4 days in the Galilee in June" or "I want to go July 15–18"
 
 4. The itinerary already has weather adjustments baked in (rainy days swap trail for indoor, hot days add early-start warning). Present the `weather_note` field for each day prominently.
 
+## Step: Enrich each trail with tiuli.com data
+
+After the pipeline returns, enrich **every trail** in the itinerary with data from tiuli.com before presenting. Do this for each `morning_trail` in the schedule:
+
+1. **Search** for the tiuli page:
+   ```
+   WebSearch: site:tiuli.com/tracks <trail name>
+   ```
+   Take the first result matching `tiuli.com/tracks/<id>/<slug>`. If no result, skip enrichment for that trail.
+
+2. **Fetch** the tiuli data:
+   ```bash
+   python .agents/skills/fetch-tiuli-trail/scripts/get_tiuli_trail.py "https://www.tiuli.com/tracks/<id>/<slug>"
+   ```
+
+3. **Merge** into the trail card — tiuli fields take precedence over OSM fields when both are present:
+   - `waze_link` → always show as 🧭 Waze navigation link
+   - `description_he` → show as the main trail description
+   - `difficulty_he` → replaces OSM difficulty label
+   - `duration_he` → supplements `estimated_duration`
+   - `trail_map_image` → show as 🗺️ trail map link
+   - `tiuli_url` → show as 🔗 link for more details
+
+If `get_tiuli_trail.py` returns `{"error": ...}`, skip silently and show only OSM data.
+
 ## Presenting the itinerary
 
 ```
@@ -76,9 +101,13 @@ User: "Plan 4 days in the Galilee in June" or "I want to go July 15–18"
 > [weather_note if present]
 
 🌅 Morning — **[trail name]**
+   🧭 [ניווט ל-Waze](waze_link)
    📍 Trailhead: [📍 Start here](https://www.google.com/maps?q=trailhead_lat,trailhead_lng)
-   🗺️ [from] → [to]  |  📏 [distance_km] km  |  ⏱️ [estimated_duration]  |  💪 [difficulty]
+   🗺️ [from] → [to]  |  📏 [distance_km] km  |  ⏱️ [duration_he or estimated_duration]  |  💪 [difficulty_he or difficulty]
    🚗 Cars: [car_logistics]  |  📈 ↑[elevation_gain_m] m ↓[elevation_loss_m] m
+   📝 [description_he]
+   🗺️ [מפת המסלול](trail_map_image)
+   🔗 [פרטים נוספים באתר טיולי](tiuli_url)
 
 🍽️ Lunch — [restaurant name]
 🌙 Dinner — [restaurant name]

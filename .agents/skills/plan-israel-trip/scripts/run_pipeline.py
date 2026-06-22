@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -52,16 +53,22 @@ def validate_inputs(area: str, days: int) -> tuple[bool, str]:
 
 # ── Skill implementations ──────────────────────────────────────────────────────
 
-def _run_script(script: Path, args: list[str]) -> dict[str, Any]:
+def _run_script(script: Path, args: list[str], timeout: int = 120) -> dict[str, Any]:
     """Run a Python script and return parsed JSON output."""
-    result = subprocess.run(
+    proc = subprocess.Popen(
         [sys.executable, str(script)] + args,
-        capture_output=True, text=True, timeout=40,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     try:
-        data = json.loads(result.stdout)
+        stdout, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()  # guaranteed fast after SIGKILL; avoids the hanging communicate() in subprocess.run
+        return {"ok": False, "error": f"Script timed out after {timeout}s", "data": None}
+    try:
+        data = json.loads(stdout)
     except json.JSONDecodeError:
-        return {"ok": False, "error": f"Script returned non-JSON: {result.stdout[:200]}", "data": None}
+        return {"ok": False, "error": f"Script returned non-JSON: {stdout[:200]}", "data": None}
     if isinstance(data, dict) and "error" in data and len(data) == 1:
         return {"ok": False, "error": data["error"], "data": None}
     return {"ok": True, "data": data}
@@ -103,6 +110,8 @@ class PlacesSkill(BaseAgentSkill):
         area = inputs["area"]
         place_type = inputs.get("type", "restaurant")
         max_places = inputs.get("max", 5)
+        # Brief pause so Overpass rate limits from the preceding trails search don't bleed over
+        time.sleep(2)
         return _run_script(PLACES_SCRIPT, [area, "--type", place_type, "--max", str(max_places)])
 
     def verify(self, result: dict) -> tuple[bool, str]:
