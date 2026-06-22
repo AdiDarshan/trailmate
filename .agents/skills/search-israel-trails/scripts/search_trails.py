@@ -13,14 +13,18 @@ from __future__ import annotations
 import json
 import math
 import sys
+import time
 import urllib.parse
 import urllib.request
 import urllib.error
 
 DEFAULT_MAX = 3
+DEFAULT_MAX_KM = 30  # flag routes longer than this as long_distance_route
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 IHM_BASE = "https://israelhiking.osm.org.il/api"
 TIMEOUT = 20
+ROUTING_TIMEOUT = 10   # routing API is fast; fail quickly and fall back
+ROUTING_MIN_GAP = 0.5  # seconds between routing calls — respect IHM rate limit
 
 
 # ── HTTP helpers ─────────────────────────────────────────────────────────────
@@ -38,6 +42,72 @@ def post_json(url: str, body: str) -> object:
     req.add_header("User-Agent", "TrailMate/1.0 (travel planning)")
     with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
         return json.loads(r.read().decode())
+
+
+# ── IHM Routing API ──────────────────────────────────────────────────────────
+
+def routing_distance_and_elevation(
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> dict | None:
+    """Call IHM's routing API between two WGS84 points and return accurate metrics.
+
+    Returns a dict with ``distance_km``, ``elevation_gain_m``, ``elevation_loss_m``
+    on success, or ``None`` if the call fails or the route is degenerate.
+
+    The routing engine follows actual hiking paths, so the distance is the
+    real walking distance — not the sum of unsorted geometry segments.
+    """
+    # Skip routing when start ≈ end (loop trail whose geometry gave us the
+    # same first/last point) — the router would return near-zero distance.
+    if haversine(start, end) < 200:
+        return None
+
+    url = (
+        f"{IHM_BASE}/routing"
+        f"?from={start[0]},{start[1]}"
+        f"&to={end[0]},{end[1]}"
+        f"&type=Hike"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=ROUTING_TIMEOUT) as r:
+            data = json.loads(r.read().decode())
+    except Exception:
+        return None
+
+    features = data.get("features", [])
+    if not features:
+        return None
+
+    # Coordinates are [lng, lat, elevation]
+    coords = features[0].get("geometry", {}).get("coordinates", [])
+    if len(coords) < 2:
+        return None
+
+    # Distance: sum consecutive haversine distances on the ROUTED path
+    dist_m = sum(
+        haversine((coords[i][1], coords[i][0]), (coords[i + 1][1], coords[i + 1][0]))
+        for i in range(len(coords) - 1)
+    )
+    dist_km = round(dist_m / 1000, 1)
+    if dist_km == 0:
+        return None
+
+    # Elevation: cumulative gain and loss from per-point elevations
+    elevations = [c[2] for c in coords if len(c) > 2 and c[2] is not None]
+    gain = loss = 0
+    for i in range(1, len(elevations)):
+        diff = elevations[i] - elevations[i - 1]
+        if diff > 0:
+            gain += diff
+        else:
+            loss += abs(diff)
+
+    return {
+        "distance_km": dist_km,
+        "elevation_gain_m": round(gain),
+        "elevation_loss_m": round(loss),
+    }
 
 
 # ── Step 1: IHM search ───────────────────────────────────────────────────────
@@ -231,27 +301,46 @@ def enrich(trail: dict) -> dict:
     except Exception:
         pass
 
-    # Step 3: geometry + elevation
+    # Step 3: geometry — used only for trailhead coords and loop detection.
     coords: list[tuple[float, float]] = []
     try:
         coords = overpass_geometry(osm_type, osm_id)
         if coords:
-            # Trailhead = first coordinate of the route
             info["trailhead_coords"] = {"lat": round(coords[0][0], 6), "lng": round(coords[0][1], 6)}
-
-        if "distance_km" not in info and len(coords) >= 2:
-            info["distance_km"] = total_distance_km(coords)
-
-        if ("elevation_gain_m" not in info or "elevation_loss_m" not in info) and len(coords) >= 2:
-            gain, loss = elevation_profile(coords)
-            if "elevation_gain_m" not in info:
-                info["elevation_gain_m"] = gain
-            if "elevation_loss_m" not in info:
-                info["elevation_loss_m"] = loss
     except Exception:
         pass
 
-    # Derived fields (computed from whatever distance/elevation we have)
+    # Step 4: accurate distance + elevation via IHM routing API.
+    # Routing follows actual hiking paths, so it avoids the inflated sums
+    # produced by concatenating unsorted OSM relation member ways.
+    # Only runs when tags didn't already supply a distance value.
+    routed = None
+    if "distance_km" not in info and len(coords) >= 2:
+        try:
+            time.sleep(ROUTING_MIN_GAP)
+            routed = routing_distance_and_elevation(coords[0], coords[-1])
+        except Exception:
+            pass
+
+    if routed:
+        info["distance_km"]     = routed["distance_km"]
+        info["elevation_gain_m"] = routed["elevation_gain_m"]
+        info["elevation_loss_m"] = routed["elevation_loss_m"]
+    else:
+        # Fallback: geometry-based calculation (less accurate for complex relations)
+        if "distance_km" not in info and len(coords) >= 2:
+            info["distance_km"] = total_distance_km(coords)
+        if ("elevation_gain_m" not in info or "elevation_loss_m" not in info) and len(coords) >= 2:
+            try:
+                gain_fb, loss_fb = elevation_profile(coords)
+                if "elevation_gain_m" not in info:
+                    info["elevation_gain_m"] = gain_fb
+                if "elevation_loss_m" not in info:
+                    info["elevation_loss_m"] = loss_fb
+            except Exception:
+                pass
+
+    # Derived fields
     dist = info.get("distance_km", 0)
     gain = info.get("elevation_gain_m", 0)
 
@@ -265,11 +354,26 @@ def enrich(trail: dict) -> dict:
     return info
 
 
-def search(query: str, language: str = "en", max_results: int = DEFAULT_MAX) -> list[dict]:
+def search(
+    query: str,
+    language: str = "en",
+    max_results: int = DEFAULT_MAX,
+    max_km: float = DEFAULT_MAX_KM,
+) -> list[dict]:
     trails = ihm_search(query, language, max_results)
     if not trails:
         return []
-    return [enrich(t) for t in trails]
+    enriched = [enrich(t) for t in trails]
+    for t in enriched:
+        dist = t.get("distance_km", 0)
+        if dist > max_km:
+            # OSM geometry for a regional/national trail relation sums ALL member
+            # ways regardless of order, producing inflated distances (e.g. 481 km).
+            # Flag it so callers know to suppress the numbers and rely on tiuli.
+            t["long_distance_route"] = True
+            t.pop("distance_km", None)
+            t.pop("estimated_duration", None)
+    return enriched
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
@@ -282,12 +386,16 @@ if __name__ == "__main__":
 
     query = args[0]
     max_results = DEFAULT_MAX
+    max_km = DEFAULT_MAX_KM
     language = "en"
 
     i = 1
     while i < len(args):
         if args[i] == "--max" and i + 1 < len(args):
             max_results = min(int(args[i + 1]), 5)
+            i += 2
+        elif args[i] == "--max-km" and i + 1 < len(args):
+            max_km = float(args[i + 1])
             i += 2
         elif args[i] == "--language" and i + 1 < len(args):
             language = args[i + 1]
@@ -296,7 +404,7 @@ if __name__ == "__main__":
             i += 1
 
     try:
-        results = search(query, language, max_results)
+        results = search(query, language, max_results, max_km)
         print(json.dumps(results, ensure_ascii=False, indent=2))
     except Exception as e:
         print(json.dumps({"error": str(e)}))

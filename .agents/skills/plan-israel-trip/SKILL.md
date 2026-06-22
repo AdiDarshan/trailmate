@@ -3,123 +3,142 @@ name: plan-israel-trip
 description: >
   Use this skill whenever the user wants to plan, organize, or prepare a trip
   anywhere in Israel — even casually ("I want 3 days in the Golan", "plan a
-  weekend in Eilat"). Always produce a concrete itinerary with specific dates.
-  If the user did not provide dates, pick reasonable ones (e.g. starting next
-  weekend) and state your assumption. If the user provided dates — specific
-  ("July 15–18") or general ("in June", "next summer") — resolve them to a
-  concrete YYYY-MM-DD start date before running the pipeline, then pass
-  --start-date so the itinerary is weather-aware.
+  weekend in Eilat", "where should I hike next week?"). Always produce a
+  concrete, day-by-day itinerary. If dates are missing, pick reasonable ones
+  (next Saturday) and tell the user what you assumed.
 ---
 
-# Plan Israel Trip — Workflow Engine
+# Plan Israel Trip
 
-Orchestrates four skills through a deterministic `WorkflowEngine`:
-- 🥾 **fetch_trails** — hiking routes with distance, difficulty, coordinates
-- 🍽️ **fetch_places_restaurant** — restaurants near the area
-- 🏨 **fetch_places_hotel** — accommodation
-- 📍 **fetch_places_attraction** — POIs and attractions
-- ☁️ **fetch_weather** — forecast or historical proxy (skipped when no dates)
-- 🗓️ **assemble_itinerary** — combines everything, applies weather adjustments
+## Before you run any script — confirm these inputs
 
-All free. No API keys required.
-
-## Bundled scripts
-
-| Path | Purpose |
+| Input | How to resolve if missing |
 |---|---|
-| `scripts/run_pipeline.py` | Main entry point — always call this |
-| `scripts/workflow_engine.py` | Engine internals |
-| `scripts/get_weather.py` | Fetches forecast or historical proxy from Open-Meteo |
+| **Area** | Ask: "Which area of Israel?" |
+| **Days** | Ask: "How many days?" |
+| **Start date** | If not given, use next Saturday. Tell the user: "I'll plan starting [date] — let me know if you'd like a different date." |
 
-## Two-path procedure
+Resolve a vague date like "next summer" → mid-July, "in June" → June 15 of the nearest future year.
 
-### Path A — No dates given
+---
 
-User: "Plan a 3-day trip to the Negev"
+## Mandatory workflow — follow ALL steps in order
 
-1. Pick a concrete start date (e.g. next Saturday) and tell the user.
-2. Run **without** `--start-date` — weather is skipped, itinerary uses trails/places only:
-   ```bash
-   python .agents/skills/plan-israel-trip/scripts/run_pipeline.py "Negev" --days 3
-   ```
-3. Present the itinerary. Offer to add weather if the user confirms dates.
+### Step 1 — Search trails
 
-### Path B — Dates given (specific or general)
+```bash
+python .agents/skills/search-israel-trails/scripts/search_trails.py "<area> hike" --max <days+2>
+```
 
-User: "Plan 4 days in the Galilee in June" or "I want to go July 15–18"
+> **Tips:**
+> - Always append " hike" to the area — bare names like "Galilee" return Wikipedia results, not routes.
+> - The script automatically drops routes over 30 km (regional / multi-day trails). A good day hike is 5–20 km.
+> - If results come back empty, try a more specific area: "Lower Galilee hike", "Arbel hike", "Nahal Amud hike".
+> - If all returned trails are still over 20 km, add `--max-km 20` to the command to tighten the filter.
 
-1. **Resolve the date** to a concrete YYYY-MM-DD start date:
-   - Specific ("July 15") → `2025-07-15`
-   - General month ("in June") → use the 15th of that month in the nearest future year: `2025-06-15`
-   - Relative ("next summer") → mid-July of the coming summer: `2025-07-15`
-   - State your assumption to the user if you inferred the date.
+Pick the best `<days>` trails from the results (one per day). Prefer variety in difficulty and location.
 
-2. Run **with** `--start-date`:
-   ```bash
-   python .agents/skills/plan-israel-trip/scripts/run_pipeline.py "Galilee" --days 4 --start-date 2025-06-15
-   ```
+> **If a trail has `long_distance_route: true`:** the OSM geometry metrics are unreliable (inflated by summing all member ways). **Do not show distance or duration from this result.** Present the trail by name and location only — tiuli enrichment (Step 2) will supply the correct duration and description.
 
-3. The pipeline fetches weather for those exact dates:
-   - Within 16 days → live forecast
-   - Beyond 16 days → historical proxy (same calendar period last year). The output includes `"historical": true` — tell the user: *"Weather is based on historical data for that time of year, not a live forecast."*
+---
 
-4. The itinerary already has weather adjustments baked in (rainy days swap trail for indoor, hot days add early-start warning). Present the `weather_note` field for each day prominently.
+### Step 2 — Enrich EACH selected trail with tiuli.com data
 
-## Step: Enrich each trail with tiuli.com data
+For **every** trail you selected in Step 1, run:
 
-After the pipeline returns, enrich **every trail** in the itinerary with data from tiuli.com before presenting. Do this for each `morning_trail` in the schedule:
+```bash
+python .agents/skills/fetch-tiuli-trail/scripts/get_tiuli_trail.py "<trail name>"
+```
 
-1. **Search** for the tiuli page:
-   ```
-   WebSearch: site:tiuli.com/tracks <trail name>
-   ```
-   Take the first result matching `tiuli.com/tracks/<id>/<slug>`. If no result, skip enrichment for that trail.
+Use the exact `name` field returned from Step 1. The script matches against a local Hebrew index — no web search needed.
 
-2. **Fetch** the tiuli data:
-   ```bash
-   python .agents/skills/fetch-tiuli-trail/scripts/get_tiuli_trail.py "https://www.tiuli.com/tracks/<id>/<slug>"
-   ```
+This returns:
+- `waze_link` — navigation link to the trailhead (essential, always show this)
+- `tiuli_url` — link where the user can read full hiking instructions
+- `description_he` — editorial trail description (translate to English in your output)
+- `difficulty_he`, `duration_he` — use these over OSM values when available
+- `trail_map_image` — map image link
 
-3. **Merge** into the trail card — tiuli fields take precedence over OSM fields when both are present:
-   - `waze_link` → always show as 🧭 Waze navigation link
-   - `description_he` → show as the main trail description
-   - `difficulty_he` → replaces OSM difficulty label
-   - `duration_he` → supplements `estimated_duration`
-   - `trail_map_image` → show as 🗺️ trail map link
-   - `tiuli_url` → show as 🔗 link for more details
+If the script returns `{"error": ...}`, skip silently and use OSM data only.
 
-If `get_tiuli_trail.py` returns `{"error": ...}`, skip silently and show only OSM data.
+---
 
-## Presenting the itinerary
+### Step 3 — Check weather
+
+Use the `get_weather` **tool** (not a script):
+- `location`: the area name
+- `date`: trip start date (YYYY-MM-DD)
+- `days`: number of trip days
+
+**Hot weather rule — temp_max_c > 33°C on any day:**
+Warn the user:
+> ⚠️ [date] will be very hot ([X]°C). I recommend starting the hike before 08:00 and carrying 2L+ of water.
+
+Also suggest a better time:
+> For more comfortable hiking conditions, consider visiting in [October–April for most of Israel / avoid July–August in the Negev / the Galilee is more forgiving in spring].
+
+Still present the itinerary — let the user decide whether to reschedule.
+
+**If `historical: true`** in the response, note: "Weather is based on historical data for this time of year, not a live forecast."
+
+---
+
+### Step 4 — Find restaurants
+
+```bash
+python .agents/skills/search-israel-places/scripts/search_places.py "<area>" --type restaurant --max 4
+```
+
+Assign: 1 restaurant for lunch (near the trail), 1 for dinner (in the main town). If results are empty, suggest well-known options from your knowledge and note they may be outdated.
+
+---
+
+### Step 5 — Find accommodation
+
+```bash
+python .agents/skills/search-israel-places/scripts/search_places.py "<area>" --type hotel --max 2
+```
+
+Pick 1 hotel as the trip base. If no results, recommend the nearest large town's guesthouse or kibbutz accommodation.
+
+---
+
+### Step 6 — Present the complete itinerary
+
+Write the itinerary **in English**. Use this exact structure:
 
 ```
 # 🇮🇱 [N]-Day Trip: [Area]
-📅 [dates] | ☁️ [weather summary or "no forecast — dates not specified"]
-🏨 Base: [📍 hotel name](https://www.google.com/maps?q=LAT,LNG)
+📅 [start date] → [end date]
+🏨 Base: [📍 Hotel Name](https://www.google.com/maps?q=LAT,LNG) — [address]
 
-## Day 1 — [date] | [condition] [emoji]
-> [weather_note if present]
+---
 
-🌅 Morning — **[trail name]**
-   🧭 [ניווט ל-Waze](waze_link)
-   📍 Trailhead: [📍 Start here](https://www.google.com/maps?q=trailhead_lat,trailhead_lng)
-   🗺️ [from] → [to]  |  📏 [distance_km] km  |  ⏱️ [duration_he or estimated_duration]  |  💪 [difficulty_he or difficulty]
-   🚗 Cars: [car_logistics]  |  📈 ↑[elevation_gain_m] m ↓[elevation_loss_m] m
-   📝 [description_he]
-   🗺️ [מפת המסלול](trail_map_image)
-   🔗 [פרטים נוספים באתר טיולי](tiuli_url)
+## Day [N] — [Weekday, Date] | [Weather condition + emoji]
 
-🍽️ Lunch — [restaurant name]
-🌙 Dinner — [restaurant name]
-📍 Afternoon — [attraction name]
+> ⚠️ [weather_note — only if present]
+
+**🥾 Trail: [Trail Name]**
+- 🧭 Navigation: [Waze link text](waze_link)
+- 📍 Start: [📍 Open in Maps](https://www.google.com/maps?q=LAT,LNG) — [trailhead_from description]
+- 🏁 End: [trailhead_to description]
+- 📏 [distance_km] km | ⏱️ [duration_he or estimated_duration] | 💪 [difficulty_he or difficulty]
+- 📝 [description in English — translate from description_he if available]
+- 🔗 Full hiking guide: [tiuli_url](tiuli_url)
+
+**🍽️ Lunch:** [Restaurant Name] — [address] ([📍 Map](https://www.google.com/maps?q=LAT,LNG))
+**🍽️ Dinner:** [Restaurant Name] — [address] ([📍 Map](https://www.google.com/maps?q=LAT,LNG))
+
+---
 ```
 
-Every location must be a Google Maps link: [📍 Name](https://www.google.com/maps?q=LAT,LNG). Never show raw coordinates.
+Rules:
+- Every location that has coordinates → Google Maps link. Never show raw lat/lon.
+- If a field is missing, omit it — never write "N/A".
+- Output in English. Translate Hebrew descriptions if present.
+- After the itinerary, offer: "Want me to export this as a PDF, adjust the dates, or swap any trail?"
 
-## On pipeline failure
-
-If `status` is `failed`: check `history` for which step failed.
-Trails failing is most common — try a broader area name.
+---
 
 ## Audit tests
 should-trigger:     "I want to spend 4 days in the Negev, suggest a route"

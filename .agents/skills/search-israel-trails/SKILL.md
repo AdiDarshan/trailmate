@@ -28,14 +28,18 @@ No API keys required.
 
 1. **Run the script:**
    ```bash
-   python scripts/search_trails.py "<query>" [--max 3] [--language en]
+   python scripts/search_trails.py "<query>" [--max 3] [--language en] [--max-km 30]
    ```
-   The script handles all three API calls and returns a JSON array of trail objects.
+   The script handles all three API calls, returns a JSON array of trail objects, and
+   **automatically drops any trail over 30 km** (regional / multi-day routes).
 
-   **Query tips:** IHM's search returns hiking route relations when the query includes "trail".
+   **Query tips:** IHM's search returns hiking route relations when the query includes "hike".
    Bare area names ("Galilee", "Carmel") return place/Wikipedia results — no trails.
-   Always append "trail" to the area: `"Galilee trail"`, `"Carmel trail"`, `"Negev trail"`.
-   For a specific named route use the full name: `"Israel National Trail"`, `"Arbel trail"`.
+   Always append "hike" to the area: `"Galilee hike"`, `"Carmel hike"`, `"Negev hike"`.
+   For a specific named route use the full name: `"Arbel hike"`, `"Nahal Amud hike"`.
+   A good day hike is 5–20 km. If a result has `long_distance_route: true`, the OSM distance
+   and duration were stripped because they were unreliable (inflated geometry). Present the trail
+   by name and location only, and rely on tiuli enrichment for actual duration and difficulty.
 
 2. **Validate output** against `assets/trail.schema.json`.
    - Fields not in the schema must be dropped.

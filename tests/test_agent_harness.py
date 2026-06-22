@@ -44,4 +44,4 @@ def test_harness_initializes_with_expected_defaults(monkeypatch):
     assert harness.trajectory_log == []
     assert harness.max_iterations == 10
     assert harness.tool_use == []
-    assert harness.context_manager.max_context_tokens == 32000
+    assert harness.context_manager.max_context_tokens == 100_000

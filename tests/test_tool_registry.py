@@ -7,7 +7,7 @@ working tree.
 
 import json
 
-from trailmate.tool_registry import ToolRegistry
+from trailmate.tools.registry import ToolRegistry
 
 
 def test_init_registers_export_pdf_tool():
