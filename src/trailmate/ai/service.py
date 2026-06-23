@@ -13,7 +13,10 @@ import json
 from trailmate.ai.context import ContextManager
 from trailmate.ai.provider import LLMProvider
 from trailmate.ai.validation import ChatRequest, ChatResponse
+from trailmate.logging_config import get_logger
 from trailmate.tools.registry import ToolRegistry
+
+logger = get_logger(__name__)
 
 
 class AIService:
@@ -61,6 +64,7 @@ class AIService:
         response via ``ChatResponse`` after receiving. Returns the
         assistant's final text.
         """
+        logger.info("── user turn ── %s", user_prompt[:120])
         self.chat_history.append({"role": "user", "content": user_prompt})
 
         for iteration in range(1, self.max_iterations + 1):
@@ -97,7 +101,13 @@ class AIService:
                 for tool_call in validated.tool_calls:
                     name = tool_call.function.name
                     args = tool_call.function.arguments
+                    logger.info("[iter %d] tool call: %s  args=%s", iteration, name, args[:200])
                     result = self.tools.execute(name, args)
+                    result_preview = json.dumps(result)[:400]
+                    if isinstance(result, dict) and result.get("status") == "error":
+                        logger.error("[iter %d] tool error: %s → %s", iteration, name, result_preview)
+                    else:
+                        logger.debug("[iter %d] tool result: %s → %s", iteration, name, result_preview)
                     self.chat_history.append(
                         {
                             "role": "tool",
@@ -111,6 +121,7 @@ class AIService:
                 continue
 
             if validated.content and not validated.tool_calls:
+                logger.info("[iter %d] final answer — done", iteration)
                 self.chat_history.append(
                     {"role": "assistant", "content": validated.content}
                 )
@@ -118,7 +129,9 @@ class AIService:
 
             # Model emitted neither tool calls nor content (rare). Spin
             # until max_iterations.
+            logger.warning("[iter %d] model returned neither content nor tool_calls", iteration)
 
+        logger.error("Agent hit max_iterations (%d) without a final answer", self.max_iterations)
         raise TimeoutError("Agent exceeded maximum execution trajectory depth.")
 
     def compile_context(self) -> list[dict]:

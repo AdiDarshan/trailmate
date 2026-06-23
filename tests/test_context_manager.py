@@ -7,6 +7,7 @@ gpt-4o-mini call.
 """
 
 import json
+import logging
 from types import SimpleNamespace
 
 from trailmate.ai.context import ContextManager, _keep_last_n_groups
@@ -19,21 +20,21 @@ def test_init_metrics_start_at_zero():
     assert cm.max_context_tokens == 1000
 
 
-def test_track_burn_accumulates_metrics(capsys):
-    # track_burn only prints when input tokens exceed 60% of budget.
+def test_track_burn_accumulates_metrics(caplog):
+    # track_burn only logs when input tokens exceed 60% of budget.
     # Use a tiny budget (50 tokens) so a 30-token burn crosses the threshold.
     cm = ContextManager(max_context_tokens=50)
 
-    cm.track_burn(SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15))
-    cm.track_burn(SimpleNamespace(prompt_tokens=20, completion_tokens=8, total_tokens=28))
+    with caplog.at_level(logging.INFO, logger="trailmate.ai.context"):
+        cm.track_burn(SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15))
+        cm.track_burn(SimpleNamespace(prompt_tokens=20, completion_tokens=8, total_tokens=28))
 
-    # Metrics always accumulate, regardless of whether a log line is printed.
+    # Metrics always accumulate, regardless of whether a log line is emitted.
     assert cm.metrics == {"input_tokens": 30, "output_tokens": 13, "total_tokens": 43}
 
     # 30 input tokens / 50 budget = 60% — threshold crossed, so the second
-    # call should have printed a warning line.
-    captured = capsys.readouterr().out
-    assert "60%" in captured or "token budget" in captured.lower()
+    # call should have emitted a budget log line.
+    assert "token budget" in caplog.text.lower()
 
 
 def test_estimate_tokens_returns_positive_int_for_real_messages():

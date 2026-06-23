@@ -29,6 +29,10 @@ from typing import Any, Callable
 
 import tiktoken
 
+from trailmate.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 class ContextManager:
     """Owns token accounting + compaction for a chat-completion loop."""
@@ -64,10 +68,12 @@ class ContextManager:
 
         pct = self.metrics["input_tokens"] / self.max_context_tokens
         if pct >= 0.60:
-            print(
-                f"[token budget {pct:.0%}] "
-                f"in: {self.metrics['input_tokens']} / {self.max_context_tokens} | "
-                f"out: {self.metrics['output_tokens']}"
+            logger.info(
+                "token budget %.0f%% — in: %d / %d | out: %d",
+                pct * 100,
+                self.metrics["input_tokens"],
+                self.max_context_tokens,
+                self.metrics["output_tokens"],
             )
 
     def enforce_compaction(self, history: list, tool_use: Any) -> list:
@@ -102,9 +108,9 @@ class ContextManager:
             else:
                 step1.append(msg)
         if self._estimate_tokens(step1) <= self.max_context_tokens:
-            print(
-                f"[compaction step 1] {before_msgs} msgs / {before_tokens} tok"
-                f"  →  {len(step1)} msgs / {self._estimate_tokens(step1)} tok"
+            logger.info(
+                "compaction step 1: %d msgs / %d tok → %d msgs / %d tok",
+                before_msgs, before_tokens, len(step1), self._estimate_tokens(step1),
             )
             return step1
 
@@ -118,9 +124,9 @@ class ContextManager:
         last_groups_flat = _keep_last_n_groups(body, n=4)
         step2 = ([system_msg] if system_msg else []) + last_groups_flat
         if self._estimate_tokens(step2) <= self.max_context_tokens:
-            print(
-                f"[compaction step 2] {before_msgs} msgs / {before_tokens} tok"
-                f"  →  {len(step2)} msgs / {self._estimate_tokens(step2)} tok"
+            logger.info(
+                "compaction step 2: %d msgs / %d tok → %d msgs / %d tok",
+                before_msgs, before_tokens, len(step2), self._estimate_tokens(step2),
             )
             return step2
 
@@ -128,10 +134,10 @@ class ContextManager:
         kept_tail_len = len(last_groups_flat)
         middle = body[: len(body) - kept_tail_len]
         if not middle:
-            print(
-                f"[compaction step 2 only — nothing to summarize] "
-                f"{before_msgs} msgs / {before_tokens} tok"
-                f"  →  {len(step2)} msgs / {self._estimate_tokens(step2)} tok"
+            logger.info(
+                "compaction step 2 only (nothing to summarize): "
+                "%d msgs / %d tok → %d msgs / %d tok",
+                before_msgs, before_tokens, len(step2), self._estimate_tokens(step2),
             )
             return step2
 
@@ -141,9 +147,9 @@ class ContextManager:
             "content": f"Previous context summary: {summary}",
         }
         result = ([system_msg] if system_msg else []) + [summary_msg] + last_groups_flat
-        print(
-            f"[compaction step 3 — summarized] {before_msgs} msgs / {before_tokens} tok"
-            f"  →  {len(result)} msgs / {self._estimate_tokens(result)} tok"
+        logger.info(
+            "compaction step 3 (summarized): %d msgs / %d tok → %d msgs / %d tok",
+            before_msgs, before_tokens, len(result), self._estimate_tokens(result),
         )
         return result
 

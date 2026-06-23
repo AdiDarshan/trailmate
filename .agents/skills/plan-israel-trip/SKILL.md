@@ -27,13 +27,16 @@ Resolve a vague date like "next summer" → mid-July, "in June" → June 15 of t
 ### Step 1 — Search trails
 
 ```bash
-python .agents/skills/search-israel-trails/scripts/search_trails.py "<area> hike" --max <days+2>
+python .agents/skills/search-israel-trails/scripts/search_trails.py "<area> trail" --max <days+2>
 ```
 
+> **CRITICAL — query must end with " trail":**
+> The word "hike" returns zero results. The IHM API only matches "trail". Always construct the query as `"<area> trail"` — never `"<area> hike"` or just `"<area>"`.
+>
 > **Tips:**
-> - Always append " hike" to the area — bare names like "Galilee" return Wikipedia results, not routes.
 > - The script automatically drops routes over 30 km (regional / multi-day trails). A good day hike is 5–20 km.
-> - If results come back empty, try a more specific area: "Lower Galilee hike", "Arbel hike", "Nahal Amud hike".
+> - If results come back empty (`[]`), try a more specific sub-area or trail name: `"Lower Galilee trail"`, `"Arbel trail"`, `"Nahal Amud trail"`, `"Kinneret trail"`.
+> - If all returned trails are still `long_distance_route: true`, try the specific trail names above one by one until you get a day hike.
 > - If all returned trails are still over 20 km, add `--max-km 20` to the command to tighten the filter.
 
 Pick the best `<days>` trails from the results (one per day). Prefer variety in difficulty and location.
@@ -103,9 +106,47 @@ Pick 1 hotel as the trip base. If no results, recommend the nearest large town's
 
 ---
 
-### Step 6 — Present the complete itinerary
+### Step 6 — Save to notebook (MUST happen before the text response)
 
-Write the itinerary **in English**. Use this exact structure:
+**Call `save_itinerary` as a tool call now, before writing the final text.**
+The agent loop exits as soon as you return text — `save_itinerary` is a tool call and can only run in a tool-calling iteration, never after a text response. Always call it here.
+
+Build the JSON from the data you already have:
+
+```json
+{
+  "title": "2-Day Trip: Galilee",
+  "dates": "June 23–24, 2026",
+  "days": [
+    {
+      "day_number": 1,
+      "date": "Monday, June 23",
+      "weather": "Partly cloudy, 28°C",
+      "weather_note": "Very hot — start before 08:00, carry 2L water",
+      "trail": {
+        "name": "Arbel Trail",
+        "distance_km": "12",
+        "duration": "3–4h",
+        "difficulty": "Moderate",
+        "start_maps": "https://www.google.com/maps?q=32.82,35.51",
+        "waze": "https://waze.com/ul?...",
+        "tiuli_url": "https://www.tiuli.com/tracks/...",
+        "description": "Stunning cliffs above the Sea of Galilee..."
+      },
+      "dinner": { "name": "...", "address": "...", "maps": "https://www.google.com/maps?q=..." },
+      "hotel":  { "name": "...", "address": "...", "maps": "https://www.google.com/maps?q=..." }
+    }
+  ]
+}
+```
+
+Only include fields you actually have — omit rather than fabricate.
+
+---
+
+### Step 7 — Present the complete itinerary
+
+After `save_itinerary` returns, write the itinerary **in English**. Use this exact structure:
 
 ```
 # 🇮🇱 [N]-Day Trip: [Area]
@@ -126,7 +167,6 @@ Write the itinerary **in English**. Use this exact structure:
 - 📝 [description in English — translate from description_he if available]
 - 🔗 Full hiking guide: [tiuli_url](tiuli_url)
 
-**🍽️ Lunch:** [Restaurant Name] — [address] ([📍 Map](https://www.google.com/maps?q=LAT,LNG))
 **🍽️ Dinner:** [Restaurant Name] — [address] ([📍 Map](https://www.google.com/maps?q=LAT,LNG))
 
 ---

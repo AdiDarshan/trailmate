@@ -11,9 +11,13 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
+from trailmate.logging_config import get_logger
+from trailmate.tools.itinerary import save_itinerary
 from trailmate.tools.pdf import export_pdf
 from trailmate.tools.runners import read_file, run_script
 from trailmate.tools.weather import get_weather
+
+logger = get_logger(__name__)
 
 
 class ToolRegistry:
@@ -70,7 +74,17 @@ class ToolRegistry:
             args = json.loads(arguments_str)
         else:
             args = arguments_str
-        return self.registry[name]["exec"](args)
+
+        if name not in self.registry:
+            logger.error("execute: unknown tool %r", name)
+            raise KeyError(f"Unknown tool: {name}")
+
+        logger.debug("execute: %s args=%s", name, json.dumps(args, default=str)[:200])
+        try:
+            return self.registry[name]["exec"](args)
+        except Exception:
+            logger.exception("execute: tool %r raised", name)
+            raise
 
     def _init_tools(self) -> None:
         """Register the project's built-in tools."""
@@ -169,4 +183,74 @@ class ToolRegistry:
                 "required": ["path"],
             },
             func=read_file,
+        )
+        self.register(
+            name="save_itinerary",
+            description=(
+                "Save the completed trip itinerary as structured JSON so it can be "
+                "displayed in the notebook UI. Call this ONCE at the very end of trip "
+                "planning, after presenting the full itinerary to the user. "
+                "Always call it — even if some fields are missing. Omit unavailable "
+                "fields rather than skipping the call entirely."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title":  {"type": "string", "description": "Trip title, e.g. '2-Day Trip: Galilee'"},
+                    "dates":  {"type": "string", "description": "Human-readable date range, e.g. 'June 23–24, 2026'"},
+                    "days": {
+                        "type": "array",
+                        "description": "One entry per day.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "day_number":   {"type": "integer"},
+                                "date":         {"type": "string", "description": "e.g. 'Monday, June 23'"},
+                                "weather":      {"type": "string", "description": "e.g. 'Partly cloudy, 28°C'"},
+                                "weather_note": {"type": "string", "description": "Hot/rain/wind warning if any"},
+                                "trail": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name":        {"type": "string"},
+                                        "distance_km": {"type": "string"},
+                                        "duration":    {"type": "string"},
+                                        "difficulty":  {"type": "string"},
+                                        "start_maps":  {"type": "string", "description": "Google Maps URL for trailhead"},
+                                        "waze":        {"type": "string"},
+                                        "tiuli_url":   {"type": "string"},
+                                        "description": {"type": "string"},
+                                    },
+                                },
+                                "lunch":  {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "address": {"type": "string"},
+                                        "maps": {"type": "string"},
+                                    },
+                                },
+                                "dinner": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "address": {"type": "string"},
+                                        "maps": {"type": "string"},
+                                    },
+                                },
+                                "hotel": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "address": {"type": "string"},
+                                        "maps": {"type": "string"},
+                                    },
+                                },
+                            },
+                            "required": ["day_number", "date"],
+                        },
+                    },
+                },
+                "required": ["title", "days"],
+            },
+            func=save_itinerary,
         )

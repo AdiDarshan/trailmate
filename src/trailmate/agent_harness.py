@@ -8,15 +8,36 @@ delegates to ``ai.provider.LLMProvider``.
 
 from __future__ import annotations
 
+import logging
+import logging.handlers
 import os
 from datetime import date
 from pathlib import Path
 
 from dotenv import load_dotenv
 
+# ── Logging setup ─────────────────────────────────────────────────────────────
+# Configure once at import time. All loggers in the trailmate package
+# inherit this handler and write to trailmate.log in the project root.
+
+_LOG_PATH = Path(__file__).parent.parent.parent / "trailmate.log"
+
+_handler = logging.FileHandler(_LOG_PATH, encoding="utf-8")
+_handler.setFormatter(
+    logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+)
+
+_root_logger = logging.getLogger("trailmate")
+_root_logger.setLevel(logging.DEBUG)
+if not _root_logger.handlers:
+    _root_logger.addHandler(_handler)
+
 from trailmate.ai.provider import LLMProvider
 from trailmate.ai.service import AIService
+from trailmate.logging_config import configure_logging, get_logger
 from trailmate.tools.registry import ToolRegistry
+
+logger = get_logger(__name__)
 
 # Base identity and behaviour instructions. Per-skill routing instructions
 # are injected dynamically from SKILL.md files at construction time.
@@ -90,6 +111,11 @@ class AgentHarness:
         provider = LLMProvider(model=model)
         tool_registry = ToolRegistry()
         system_prompt = _build_system_prompt()
+        logger.info(
+            "AgentHarness initialised (model=%s, tools=%d)",
+            model,
+            len(tool_registry.registry),
+        )
 
         self._service = AIService(
             provider=provider,
@@ -142,6 +168,7 @@ def run_repl() -> None:
     persists across turns.
     """
     load_dotenv()
+    configure_logging()
     if not os.getenv("OPENAI_API_KEY"):
         raise SystemExit(
             "OPENAI_API_KEY is not set. Copy .env.example to .env and fill it in."

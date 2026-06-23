@@ -2,12 +2,29 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
+import sys
 from pathlib import Path
+
+from trailmate.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 # Absolute path to the project root — used to set the working directory
 # and to constrain file access to the project tree.
 _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+
+# Skill docs (SKILL.md) tell the model to invoke scripts as ``python ...``,
+# but many systems only ship ``python3`` (or the app runs inside a venv whose
+# interpreter isn't on PATH as ``python``). Rewrite a leading ``python``/
+# ``python3`` token to the interpreter actually running this app, so scripts
+# inherit the same environment and installed dependencies.
+_PYTHON_PREFIX = re.compile(r"^(python3?)(?=\s)")
+
+
+def _normalize_interpreter(command: str) -> str:
+    return _PYTHON_PREFIX.sub(lambda _: f'"{sys.executable}"', command, count=1)
 
 
 def run_script(args: dict) -> dict:
@@ -22,6 +39,9 @@ def run_script(args: dict) -> dict:
     command = args.get("command", "").strip()
     if not command:
         return {"status": "error", "message": "command is required"}
+
+    command = _normalize_interpreter(command)
+    logger.info("run_script → %s", command)
     try:
         proc = subprocess.Popen(
             command,
@@ -36,7 +56,17 @@ def run_script(args: dict) -> dict:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
+            logger.error("run_script timed out: %s", command)
             return {"status": "error", "message": "Script timed out after 180s"}
+
+        logger.debug("stdout: %s", stdout[:1000] if stdout else "(empty)")
+        if stderr:
+            logger.warning("stderr: %s", stderr[:500])
+        if proc.returncode != 0:
+            logger.error("returncode %d for: %s", proc.returncode, command)
+        else:
+            logger.info("returncode 0 — OK")
+
         return {
             "status": "success" if proc.returncode == 0 else "error",
             "stdout": stdout,
@@ -44,6 +74,7 @@ def run_script(args: dict) -> dict:
             "returncode": proc.returncode,
         }
     except Exception as e:
+        logger.exception("run_script exception for: %s", command)
         return {"status": "error", "message": str(e)}
 
 

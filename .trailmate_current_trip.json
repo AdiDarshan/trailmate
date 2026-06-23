@@ -1,0 +1,59 @@
+{
+  "title": "2-Day Trip: Galilee",
+  "dates": "June 27–28, 2026",
+  "days": [
+    {
+      "day_number": 1,
+      "date": "Saturday, June 27",
+      "weather": "Partly cloudy, 34°C",
+      "weather_note": "Very hot — start hike early, carry extra water",
+      "trail": {
+        "name": "Lower Galilee Trail (Old)",
+        "difficulty": "קל",
+        "start_maps": "https://www.google.com/maps?q=32.8758815,35.50272880000001",
+        "waze": "https://waze.com/ul?navigate=yes&ll=32.8758815,35.50272880000001",
+        "tiuli_url": "https://www.tiuli.com/tracks/378",
+        "description": "Plan your visit to the Lower Galilee Trail soon? Fun! On Tiuli's Israel travel site, you'll find all the information about the Lower Galilee Trail - how to get there, interesting routes, your updates from the field and the trail map."
+      },
+      "lunch": {
+        "name": "Rosa",
+        "address": "",
+        "maps": "https://www.google.com/maps?q=32.7872238,35.541554"
+      },
+      "dinner": {
+        "name": "Laguna",
+        "address": "",
+        "maps": "https://www.google.com/maps?q=32.7870578,35.5418287"
+      },
+      "hotel": {
+        "name": "כפר הנופש עין גב",
+        "address": "",
+        "maps": "https://www.google.com/maps?q=32.7684849,35.6391529"
+      }
+    },
+    {
+      "day_number": 2,
+      "date": "Sunday, June 28",
+      "weather": "Partly cloudy, 35°C",
+      "weather_note": "Very hot — start hike early, carry extra water",
+      "trail": {
+        "name": "Northern Galilee Regional Trail",
+        "difficulty": "קל",
+        "start_maps": "https://www.google.com/maps?q=32.8758815,35.50272880000001",
+        "waze": "https://waze.com/ul?navigate=yes&ll=32.8758815,35.50272880000001",
+        "tiuli_url": "https://www.tiuli.com/tracks/378",
+        "description": "Plan your visit to the Lower Galilee Trail soon? Fun! On Tiuli's Israel travel site, you'll find all the information about the Lower Galilee Trail - how to get there, interesting routes, your updates from the field and the trail map."
+      },
+      "lunch": {
+        "name": "Big Ben",
+        "address": "",
+        "maps": "https://www.google.com/maps?q=32.7872772,35.5417308"
+      },
+      "dinner": {
+        "name": "צ'וקו בר",
+        "address": "",
+        "maps": "https://www.google.com/maps?q=32.787187,35.5439624"
+      }
+    }
+  ]
+}

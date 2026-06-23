@@ -14,6 +14,10 @@ from typing import Any
 
 from openai import OpenAI
 
+from trailmate.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 class LLMProvider:
     """Thin wrapper around the OpenAI chat completions API.
@@ -46,7 +50,26 @@ class LLMProvider:
         kwargs: dict[str, Any] = {"model": self.model, "messages": messages}
         if tools:
             kwargs["tools"] = tools
-        return self._client.chat.completions.create(**kwargs)
+        logger.debug(
+            "chat → model=%s messages=%d tools=%d",
+            self.model,
+            len(messages),
+            len(tools) if tools else 0,
+        )
+        try:
+            response = self._client.chat.completions.create(**kwargs)
+        except Exception:
+            logger.exception("chat call failed (model=%s)", self.model)
+            raise
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            logger.info(
+                "chat ← prompt=%s completion=%s total=%s tokens",
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                usage.total_tokens,
+            )
+        return response
 
     def summarize(self, prompt: str) -> str:
         """Compress text using a cheap model. Used by ContextManager step 3.
