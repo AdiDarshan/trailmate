@@ -35,6 +35,7 @@ a { color: inherit; }
 .tm-trip-active { background: #fff3bf; border-color: #ffb74d; }
 .tm-trip-title { font-weight: 700; font-size: 0.88rem; color: #1a1a1a; }
 .tm-trip-dates { font-size: 0.75rem; color: #6b7280; margin-top: 2px; }
+.tm-connect-tg { padding: 9px; border-radius: 10px; border: none; background: #229ed9; color: #fff; font-weight: 700; font-size: 0.82rem; cursor: pointer; }
 .tm-signout { padding: 8px; border-radius: 10px; border: 1px solid #e0ddd0; background: #fff; color: #6b7280; font-weight: 600; font-size: 0.8rem; cursor: pointer; }
 
 /* ── Notebook header + Save ── */

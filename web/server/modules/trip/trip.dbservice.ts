@@ -48,6 +48,21 @@ class TripDbService {
     return data.data as Itinerary;
   }
 
+  /** All of a user's trips with start_date — used by the reminder scheduler. */
+  async listByUserWithMeta(userId: string): Promise<Array<{ id: string } & TripWithMeta>> {
+    const { data, error } = await supabase
+      .from("trips")
+      .select("id,start_date,data")
+      .eq("user_id", userId)
+      .not("start_date", "is", null);
+    if (error) throw new Error(error.message);
+    return (data ?? []).map((r) => ({
+      id: r.id,
+      start_date: r.start_date ?? null,
+      data: r.data as Itinerary,
+    }));
+  }
+
   /** Itinerary + machine start_date — used by the reminder scheduler (system). */
   async getWithMeta(id: string): Promise<TripWithMeta | null> {
     const { data, error } = await supabase

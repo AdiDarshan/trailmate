@@ -5,7 +5,7 @@
 // with gpt-4o, sends it via Telegram, and records it so it's never re-sent.
 
 import OpenAI from "openai";
-import { subscriptionDbService } from "../telegram/subscription.dbservice";
+import { telegramDbService } from "../telegram/telegram.dbservice";
 import { telegramService } from "../telegram/telegram.service";
 import { tripDbService } from "../trip/trip.dbservice";
 import type { Day, Itinerary } from "../../shared/types";
@@ -49,37 +49,36 @@ async function summarize(client: OpenAI, trip: Itinerary, day: Day): Promise<str
 }
 
 class ReminderService {
-  /** Evaluate the daily-summary rule across all subscriptions. Returns a count. */
+  /** Daily-summary rule: for each linked account, send the day-before summary
+   *  of any of their trips that starts a day tomorrow. */
   async runDailySummaries(): Promise<{ sent: number; checked: number }> {
-    const subs = await subscriptionDbService.listAll();
-    if (subs.length === 0) return { sent: 0, checked: 0 };
+    const links = await telegramDbService.listLinks();
+    if (links.length === 0) return { sent: 0, checked: 0 };
 
     const tomorrow = addDaysISO(israelToday(), 1);
     const client = new OpenAI();
     let sent = 0;
 
-    for (const sub of subs) {
-      const trip = await tripDbService.getWithMeta(sub.trip_id);
-      if (!trip?.start_date) continue;
+    for (const link of links) {
+      const trips = await tripDbService.listByUserWithMeta(link.user_id);
+      for (const trip of trips) {
+        if (!trip.start_date) continue;
+        const days: Day[] = trip.data.days ?? [];
+        const day = days.find((d) => dayDate(trip.start_date!, d.day_number) === tomorrow);
+        if (!day) continue;
+        if (await telegramDbService.alreadySent(trip.id, KIND, day.day_number, link.chat_id)) continue;
 
-      const days: Day[] = trip.data.days ?? [];
-      const day = days.find((d) => dayDate(trip.start_date!, d.day_number) === tomorrow);
-      if (!day) continue;
-
-      if (await subscriptionDbService.alreadySent(sub.trip_id, KIND, day.day_number, sub.chat_id)) {
-        continue;
-      }
-
-      const text = await summarize(client, trip.data, day);
-      const header = `🥾 *Tomorrow — Day ${day.day_number}* (${day.date ?? tomorrow})\n\n`;
-      const ok = await telegramService.sendMessage(sub.chat_id, header + text);
-      if (ok) {
-        await subscriptionDbService.markSent(sub.trip_id, KIND, day.day_number, sub.chat_id);
-        sent++;
+        const text = await summarize(client, trip.data, day);
+        const header = `🥾 *Tomorrow — Day ${day.day_number}* (${day.date ?? tomorrow})\n\n`;
+        const ok = await telegramService.sendMessage(link.chat_id, header + text);
+        if (ok) {
+          await telegramDbService.markSent(trip.id, KIND, day.day_number, link.chat_id);
+          sent++;
+        }
       }
     }
 
-    return { sent, checked: subs.length };
+    return { sent, checked: links.length };
   }
 }
 

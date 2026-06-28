@@ -3,6 +3,8 @@
 
 import { nanoid } from "nanoid";
 import { tripDbService } from "./trip.dbservice";
+import { telegramDbService } from "../telegram/telegram.dbservice";
+import { telegramService } from "../telegram/telegram.service";
 import type { Itinerary, TripSummary } from "../../shared/types";
 
 class TripService {
@@ -24,6 +26,23 @@ class TripService {
       start_date: startDate,
       data: { ...itinerary, id: tripId },
     });
+
+    // Fire-and-forget Telegram confirmation if the user linked their account.
+    // Never let a notification failure break the save.
+    try {
+      const chatId = await telegramDbService.getChatId(userId);
+      if (chatId) {
+        const when = itinerary.dates ? ` (${itinerary.dates})` : "";
+        await telegramService.sendMessage(
+          chatId,
+          `✅ Saved *${itinerary.title || "your trip"}*${when} to your trips. ` +
+            "I'll remind you the day before each day.",
+        );
+      }
+    } catch (e: any) {
+      console.error("save confirmation failed:", e?.message ?? e);
+    }
+
     return { trip_id: tripId };
   }
 

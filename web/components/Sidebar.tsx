@@ -20,6 +20,13 @@ export default function Sidebar({
     window.location.href = "/login";
   }
 
+  async function connectTelegram() {
+    const res = await fetch("/api/telegram/link");
+    if (!res.ok) return;
+    const { url } = await res.json();
+    if (url) window.open(url, "_blank");
+  }
+
   return (
     <aside className="tm-sidebar">
       <div className="tm-sidebar-head">
@@ -48,6 +55,9 @@ export default function Sidebar({
         )}
       </div>
 
+      <button className="tm-connect-tg" onClick={connectTelegram}>
+        🔔 Connect Telegram
+      </button>
       <button className="tm-signout" onClick={signOut}>
         Sign out
       </button>
