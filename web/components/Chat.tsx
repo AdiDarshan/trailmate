@@ -1,26 +1,24 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "@/lib/types";
 
-// Minimal markdown: render [text](url) links and leave the rest as text.
+// Render assistant/user text as GitHub-flavoured Markdown. Links open in a new
+// tab; everything else (headings, bold, lists) renders properly instead of
+// showing raw ### / ** symbols.
 function renderContent(text: string) {
-  const parts: React.ReactNode[] = [];
-  const re = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  let key = 0;
-  while ((m = re.exec(text))) {
-    if (m.index > last) parts.push(text.slice(last, m.index));
-    parts.push(
-      <a key={key++} href={m[2]} target="_blank" rel="noreferrer">
-        {m[1]}
-      </a>,
-    );
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) parts.push(text.slice(last));
-  return parts;
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  );
 }
 
 export default function Chat({ onTrip }: { onTrip: (id: string) => void }) {

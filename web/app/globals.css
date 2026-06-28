@@ -30,9 +30,16 @@ a { color: inherit; }
 .tm-chat-scroll { flex: 1; overflow-y: auto; padding-right: 6px; }
 .tm-msg { display: flex; gap: 8px; margin-bottom: 14px; line-height: 1.55; }
 .tm-msg-avatar { font-size: 1.3rem; flex-shrink: 0; }
-.tm-msg-body { background: #fff; border-radius: 12px; padding: 10px 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); white-space: pre-wrap; word-break: break-word; }
+.tm-msg-body { background: #fff; border-radius: 12px; padding: 10px 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); word-break: break-word; }
 .tm-msg-user .tm-msg-body { background: #eaf6e9; }
 .tm-msg-body a { font-weight: 700; text-decoration: none; color: #1b6b2f; }
+/* Tighten Markdown block spacing inside chat bubbles. */
+.tm-msg-body > :first-child { margin-top: 0; }
+.tm-msg-body > :last-child { margin-bottom: 0; }
+.tm-msg-body p { margin: 6px 0; }
+.tm-msg-body ul, .tm-msg-body ol { margin: 6px 0; padding-left: 20px; }
+.tm-msg-body li { margin: 2px 0; }
+.tm-msg-body h1, .tm-msg-body h2, .tm-msg-body h3 { font-size: 1rem; margin: 10px 0 4px; }
 
 .tm-input-row { display: flex; gap: 8px; margin-top: 12px; }
 .tm-input { flex: 1; padding: 12px 14px; border-radius: 12px; border: 1px solid #e0ddd0; font-size: 0.95rem; background: #fff; color: var(--ink); }

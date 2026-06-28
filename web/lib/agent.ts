@@ -31,6 +31,10 @@ export async function* runAgent(history: ChatMessage[]): AsyncGenerator<AgentEve
   ];
 
   let savedTripId: string | null = null;
+  // Whether the agent did real planning this turn — used to decide if we should
+  // force a save_trip the model forgot to call (so the notebook always fills).
+  let usedPlanningTool = false;
+  const PLANNING_TOOLS = new Set(["search_tiuli", "search_trails", "search_places"]);
 
   for (let iter = 1; iter <= MAX_ITERATIONS; iter++) {
     const stream = await client.chat.completions.create({
@@ -90,6 +94,7 @@ export async function* runAgent(history: ChatMessage[]): AsyncGenerator<AgentEve
         } catch {
           parsed = {};
         }
+        if (PLANNING_TOOLS.has(c.name)) usedPlanningTool = true;
         const result = await executeTool(c.name, parsed);
         if (
           c.name === "save_trip" &&
@@ -109,6 +114,12 @@ export async function* runAgent(history: ChatMessage[]): AsyncGenerator<AgentEve
     }
 
     // No tool calls → the streamed content above was the final answer.
+    // Reliability net: if the agent clearly planned a trip but forgot to call
+    // save_trip, force one call so the notebook always populates.
+    if (!savedTripId && usedPlanningTool) {
+      messages.push({ role: "assistant", content });
+      savedTripId = await forceSaveTrip(client, messages);
+    }
     if (savedTripId) yield { type: "trip", id: savedTripId };
     yield { type: "done" };
     return;
@@ -118,4 +129,44 @@ export async function* runAgent(history: ChatMessage[]): AsyncGenerator<AgentEve
 
   yield { type: "error", message: "Agent exceeded maximum execution depth." };
   yield { type: "done" };
+}
+
+// Make one forced save_trip call so a planned itinerary always reaches the
+// notebook, even when the model neglected to call the tool itself. The model
+// extracts the structured fields from the conversation it just produced.
+async function forceSaveTrip(
+  client: OpenAI,
+  messages: ChatParam[],
+): Promise<string | null> {
+  try {
+    const res = await client.chat.completions.create({
+      model: MODEL,
+      messages: [
+        ...messages,
+        {
+          role: "user",
+          content:
+            "Now save the itinerary you just presented by calling save_trip with " +
+            "the structured day-by-day data. Do not write anything else.",
+        },
+      ],
+      tools: TOOL_SCHEMAS,
+      tool_choice: { type: "function", function: { name: "save_trip" } },
+    });
+    const call = res.choices[0]?.message?.tool_calls?.[0];
+    if (!call) return null;
+    let parsed: Record<string, any> = {};
+    try {
+      parsed = call.function.arguments ? JSON.parse(call.function.arguments) : {};
+    } catch {
+      return null;
+    }
+    const result = await executeTool("save_trip", parsed);
+    if (result && typeof result === "object" && (result as any).trip_id) {
+      return (result as any).trip_id;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
