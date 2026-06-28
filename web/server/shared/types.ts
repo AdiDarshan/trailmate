@@ -33,7 +33,15 @@ export interface Itinerary {
   id?: string;
   title: string;
   dates?: string;
+  start_date?: string; // YYYY-MM-DD, for reminder scheduling
   days: Day[];
+}
+
+// One row in the saved-trips sidebar.
+export interface TripSummary {
+  id: string;
+  title: string;
+  dates?: string;
 }
 
 export interface ChatMessage {

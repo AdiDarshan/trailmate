@@ -1,4 +1,4 @@
-// HTTP entry point — delegates to the trip controller.
+// HTTP entry point — load one owned trip.
 
 import { tripController } from "@/server/modules/trip/trip.controller";
 

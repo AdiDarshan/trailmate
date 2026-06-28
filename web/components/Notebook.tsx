@@ -103,29 +103,34 @@ function WeatherCard({ day }: { day: Day }) {
   );
 }
 
-export default function Notebook({ tripId }: { tripId: string | null }) {
-  const [itin, setItin] = useState<Itinerary | null>(null);
+export default function Notebook({
+  itinerary,
+  tripId,
+  canSave,
+  onSave,
+}: {
+  itinerary: Itinerary | null;
+  tripId: string | null; // set only when the shown itinerary is a saved trip
+  canSave: boolean;
+  onSave: () => void | Promise<void>;
+}) {
+  const itin = itinerary;
   const [active, setActive] = useState(0);
+  const [saving, setSaving] = useState(false);
 
+  // Reset to day 1 whenever a different itinerary is shown.
   useEffect(() => {
-    if (!tripId) {
-      setItin(null);
-      return;
+    setActive(0);
+  }, [itinerary]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await onSave();
+    } finally {
+      setSaving(false);
     }
-    let cancelled = false;
-    fetch(`/api/trip/${tripId}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!cancelled && d && !d.error) {
-          setItin(d);
-          setActive(0);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [tripId]);
+  }
 
   if (!itin) {
     return (
@@ -150,8 +155,17 @@ export default function Notebook({ tripId }: { tripId: string | null }) {
 
   return (
     <>
-      <div className="tm-pane-title">📓 {itin.title}</div>
-      {itin.dates && <div className="tm-pane-sub">{itin.dates}</div>}
+      <div className="tm-notebook-head">
+        <div>
+          <div className="tm-pane-title">📓 {itin.title}</div>
+          {itin.dates && <div className="tm-pane-sub">{itin.dates}</div>}
+        </div>
+        {canSave && (
+          <button className="tm-save" onClick={handleSave} disabled={saving}>
+            {saving ? "Saving…" : "💾 Save trip"}
+          </button>
+        )}
+      </div>
       {shareUrl && (
         <div className="tm-share">
           Share: <a href={shareUrl}>{shareUrl}</a>

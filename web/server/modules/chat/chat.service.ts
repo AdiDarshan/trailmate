@@ -5,28 +5,40 @@
 import OpenAI from "openai";
 import { buildSystemPrompt } from "../../agent/prompt";
 import { TOOL_SCHEMAS, PLANNING_TOOLS, executeTool } from "../../agent/tools";
-import type { ChatMessage } from "../../shared/types";
+import type { ChatMessage, Itinerary } from "../../shared/types";
 
 const MODEL = "gpt-4o";
 const MAX_ITERATIONS = 10;
 
 export type AgentEvent =
   | { type: "text"; v: string }
-  | { type: "trip"; id: string }
+  | { type: "itinerary"; data: Itinerary }
   | { type: "error"; message: string }
   | { type: "done" };
 
 type ChatParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
 class ChatService {
-  async *run(history: ChatMessage[]): AsyncGenerator<AgentEvent> {
+  async *run(history: ChatMessage[], currentTrip: Itinerary | null = null): AsyncGenerator<AgentEvent> {
     const client = new OpenAI();
     const messages: ChatParam[] = [
       { role: "system", content: buildSystemPrompt() },
-      ...history.map((m) => ({ role: m.role, content: m.content }) as ChatParam),
     ];
+    // Edit context: if a saved trip is open, tell the agent so requested changes
+    // modify THIS trip (and it re-presents the full updated itinerary).
+    if (currentTrip) {
+      messages.push({
+        role: "system",
+        content:
+          "The user is currently viewing this saved trip. If they ask for changes, " +
+          "modify it and call present_itinerary with the COMPLETE updated itinerary " +
+          "(preserve start_date and unchanged days):\n" +
+          JSON.stringify(currentTrip),
+      });
+    }
+    messages.push(...history.map((m) => ({ role: m.role, content: m.content }) as ChatParam));
 
-    let savedTripId: string | null = null;
+    let presented: Itinerary | null = null;
     let usedPlanningTool = false;
 
     for (let iter = 1; iter <= MAX_ITERATIONS; iter++) {
@@ -81,8 +93,8 @@ class ChatService {
           }
           if (PLANNING_TOOLS.has(c.name)) usedPlanningTool = true;
           const result = await executeTool(c.name, parsed);
-          if (c.name === "save_trip" && result && typeof result === "object" && (result as any).trip_id) {
-            savedTripId = (result as any).trip_id;
+          if (c.name === "present_itinerary" && result && typeof result === "object" && (result as any).itinerary) {
+            presented = (result as any).itinerary as Itinerary;
           }
           messages.push({ role: "tool", tool_call_id: c.id, content: JSON.stringify(result) });
         }
@@ -90,13 +102,13 @@ class ChatService {
       }
 
       // No tool calls → the streamed content was the final answer. If the agent
-      // clearly planned a trip but forgot save_trip, force one so the notebook
-      // always populates.
-      if (!savedTripId && usedPlanningTool) {
+      // clearly planned a trip but forgot present_itinerary, force one so the
+      // notebook always populates.
+      if (!presented && usedPlanningTool) {
         messages.push({ role: "assistant", content });
-        savedTripId = await this.forceSaveTrip(client, messages);
+        presented = await this.forcePresent(client, messages);
       }
-      if (savedTripId) yield { type: "trip", id: savedTripId };
+      if (presented) yield { type: "itinerary", data: presented };
       yield { type: "done" };
       return;
     }
@@ -105,7 +117,7 @@ class ChatService {
     yield { type: "done" };
   }
 
-  private async forceSaveTrip(client: OpenAI, messages: ChatParam[]): Promise<string | null> {
+  private async forcePresent(client: OpenAI, messages: ChatParam[]): Promise<Itinerary | null> {
     try {
       const res = await client.chat.completions.create({
         model: MODEL,
@@ -114,12 +126,12 @@ class ChatService {
           {
             role: "user",
             content:
-              "Now save the itinerary you just presented by calling save_trip with " +
-              "the structured day-by-day data. Do not write anything else.",
+              "Now present the itinerary you just described by calling present_itinerary " +
+              "with the structured day-by-day data. Do not write anything else.",
           },
         ],
         tools: TOOL_SCHEMAS,
-        tool_choice: { type: "function", function: { name: "save_trip" } },
+        tool_choice: { type: "function", function: { name: "present_itinerary" } },
       });
       const call = res.choices[0]?.message?.tool_calls?.[0];
       if (!call) return null;
@@ -129,9 +141,9 @@ class ChatService {
       } catch {
         return null;
       }
-      const result = await executeTool("save_trip", parsed);
-      if (result && typeof result === "object" && (result as any).trip_id) {
-        return (result as any).trip_id;
+      const result = await executeTool("present_itinerary", parsed);
+      if (result && typeof result === "object" && (result as any).itinerary) {
+        return (result as any).itinerary as Itinerary;
       }
       return null;
     } catch {

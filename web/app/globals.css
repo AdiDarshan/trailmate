@@ -20,9 +20,27 @@ html, body {
 a { color: inherit; }
 
 /* ── Layout ── */
-.tm-app { display: flex; gap: 24px; height: 100vh; padding: 20px; }
+.tm-app { display: flex; gap: 20px; height: 100vh; padding: 20px; }
 .tm-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .tm-pane-chat { flex: 1.05; }
+
+/* ── Sidebar (saved trips) ── */
+.tm-sidebar { width: 230px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; border-right: 1px solid #eee5cf; padding-right: 14px; }
+.tm-sidebar-head { display: flex; align-items: center; justify-content: space-between; }
+.tm-newtrip { padding: 6px 12px; border-radius: 10px; border: none; background: #2e9e2e; color: #fff; font-weight: 700; font-size: 0.8rem; cursor: pointer; }
+.tm-trips-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.tm-trips-empty { color: #9aa0a6; font-size: 0.85rem; padding: 12px 4px; }
+.tm-trip-item { text-align: left; padding: 10px 12px; border-radius: 12px; border: 1px solid #e0ddd0; background: #fff; cursor: pointer; }
+.tm-trip-item:hover { border-color: #ffb74d; }
+.tm-trip-active { background: #fff3bf; border-color: #ffb74d; }
+.tm-trip-title { font-weight: 700; font-size: 0.88rem; color: #1a1a1a; }
+.tm-trip-dates { font-size: 0.75rem; color: #6b7280; margin-top: 2px; }
+.tm-signout { padding: 8px; border-radius: 10px; border: 1px solid #e0ddd0; background: #fff; color: #6b7280; font-weight: 600; font-size: 0.8rem; cursor: pointer; }
+
+/* ── Notebook header + Save ── */
+.tm-notebook-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.tm-save { padding: 10px 16px; border-radius: 12px; border: none; background: #fb8c00; color: #fff; font-weight: 800; font-size: 0.9rem; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+.tm-save:disabled { background: #f0c489; cursor: not-allowed; }
 .tm-pane-title { font-size: 1.35rem; font-weight: 800; margin: 0 0 2px; color: #1b3a1f; }
 .tm-pane-sub { color: #6b7280; font-size: 0.85rem; margin-bottom: 12px; }
 

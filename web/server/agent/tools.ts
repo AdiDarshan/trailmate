@@ -6,7 +6,6 @@ import type OpenAI from "openai";
 import { trailService } from "../modules/trail/trail.service";
 import { placeService } from "../modules/place/place.service";
 import { weatherService } from "../modules/weather/weather.service";
-import { tripService } from "../modules/trip/trip.service";
 
 export interface ToolDef {
   schema: OpenAI.Chat.Completions.ChatCompletionTool;
@@ -133,15 +132,16 @@ export const TOOLS: Record<string, ToolDef> = {
     execute: (a) => weatherService.forecast(String(a.location ?? ""), a.date ? String(a.date) : undefined, Number(a.days ?? 3)),
   },
 
-  save_trip: {
+  present_itinerary: {
     schema: {
       type: "function",
       function: {
-        name: "save_trip",
+        name: "present_itinerary",
         description:
-          "Save the completed trip itinerary so it renders in the notebook and gets a " +
-          "shareable link. Call ONCE at the very end, after presenting the full itinerary. " +
-          "Always call it even if some fields are missing.",
+          "Present the completed trip itinerary so it renders in the notebook for the " +
+          "user to review and Save. Call ONCE at the very end, after describing the trip " +
+          "in chat. This does NOT save it — the user saves from the notebook. Always call " +
+          "it even if some fields are missing.",
         parameters: {
           type: "object",
           properties: {
@@ -157,7 +157,16 @@ export const TOOLS: Record<string, ToolDef> = {
         },
       },
     },
-    execute: (a) => tripService.save(a),
+    // No persistence — just echo the structured itinerary back to the loop,
+    // which streams it to the browser for preview.
+    execute: async (a) => ({
+      itinerary: {
+        title: String(a.title ?? "Your Trip"),
+        dates: a.dates ? String(a.dates) : undefined,
+        start_date: a.start_date ?? undefined,
+        days: Array.isArray(a.days) ? a.days : [],
+      },
+    }),
   },
 };
 

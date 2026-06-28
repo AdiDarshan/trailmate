@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatMessage } from "@/server/shared/types";
+import type { ChatMessage, Itinerary } from "@/server/shared/types";
 
 // Render assistant/user text as GitHub-flavoured Markdown. Links open in a new
 // tab; everything else (headings, bold, lists) renders properly instead of
@@ -21,7 +21,13 @@ function renderContent(text: string) {
   );
 }
 
-export default function Chat({ onTrip }: { onTrip: (id: string) => void }) {
+export default function Chat({
+  tripId,
+  onItinerary,
+}: {
+  tripId: string | null;
+  onItinerary: (data: Itinerary) => void;
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -43,7 +49,8 @@ export default function Chat({ onTrip }: { onTrip: (id: string) => void }) {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next }),
+        // tripId lets the agent edit the currently-open saved trip in place.
+        body: JSON.stringify({ messages: next, tripId }),
       });
       if (!res.ok || !res.body) throw new Error(`Request failed (${res.status})`);
 
@@ -69,8 +76,8 @@ export default function Chat({ onTrip }: { onTrip: (id: string) => void }) {
           if (ev.type === "text") {
             assistant += ev.v;
             setMessages([...next, { role: "assistant", content: assistant }]);
-          } else if (ev.type === "trip") {
-            onTrip(ev.id);
+          } else if (ev.type === "itinerary") {
+            onItinerary(ev.data);
           } else if (ev.type === "error") {
             assistant += `\n\n⚠️ ${ev.message}`;
             setMessages([...next, { role: "assistant", content: assistant }]);
