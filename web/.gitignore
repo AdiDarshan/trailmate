@@ -1,0 +1,15 @@
+# Re-include app dirs/files the root Python .gitignore would otherwise hide
+# (root has `lib/` for Python packaging and `.env.*` for secrets).
+!lib/
+!.env.local.example
+
+node_modules
+.next
+out
+.env
+.env.local
+.env*.local
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+.vercel

@@ -1,0 +1,63 @@
+/* TrailMate — bright, friendly notebook theme. Card palette ported from the
+   original Streamlit app. */
+
+:root {
+  --bg: #fffdf6;
+  --ink: #1a1a1a;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  height: 100%;
+}
+
+a { color: inherit; }
+
+/* ── Layout ── */
+.tm-app { display: flex; gap: 24px; height: 100vh; padding: 20px; }
+.tm-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tm-pane-chat { flex: 1.05; }
+.tm-pane-title { font-size: 1.35rem; font-weight: 800; margin: 0 0 2px; color: #1b3a1f; }
+.tm-pane-sub { color: #6b7280; font-size: 0.85rem; margin-bottom: 12px; }
+
+/* ── Chat ── */
+.tm-chat-scroll { flex: 1; overflow-y: auto; padding-right: 6px; }
+.tm-msg { display: flex; gap: 8px; margin-bottom: 14px; line-height: 1.55; }
+.tm-msg-avatar { font-size: 1.3rem; flex-shrink: 0; }
+.tm-msg-body { background: #fff; border-radius: 12px; padding: 10px 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); white-space: pre-wrap; word-break: break-word; }
+.tm-msg-user .tm-msg-body { background: #eaf6e9; }
+.tm-msg-body a { font-weight: 700; text-decoration: none; color: #1b6b2f; }
+
+.tm-input-row { display: flex; gap: 8px; margin-top: 12px; }
+.tm-input { flex: 1; padding: 12px 14px; border-radius: 12px; border: 1px solid #e0ddd0; font-size: 0.95rem; background: #fff; color: var(--ink); }
+.tm-send { padding: 12px 18px; border-radius: 12px; border: none; background: #2e9e2e; color: #fff; font-weight: 700; cursor: pointer; }
+.tm-send:disabled { background: #a9c9a9; cursor: not-allowed; }
+
+/* ── Notebook ── */
+.tm-day-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.tm-tab { padding: 6px 14px; border-radius: 999px; border: 1px solid #e0ddd0; background: #fff; cursor: pointer; font-weight: 700; font-size: 0.85rem; }
+.tm-tab-active { background: #ffb74d; border-color: #ffb74d; color: #4e342e; }
+
+.tm-notebook-scroll { flex: 1; overflow-y: auto; padding-right: 6px; }
+.tm-day-header { background: linear-gradient(90deg, #ffd54f 0%, #ffb74d 100%); color: #4e342e; border-radius: 14px; padding: 12px 18px; margin-bottom: 14px; font-weight: 800; font-size: 1.05rem; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+.tm-day-date { font-size: 0.8rem; font-weight: 600; opacity: 0.85; }
+
+.tm-card { border-radius: 14px; padding: 14px 16px; margin-bottom: 12px; line-height: 1.55; font-size: 0.9rem; box-shadow: 0 2px 6px rgba(0,0,0,0.06); }
+.tm-card-title { font-size: 0.82rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 8px; }
+.tm-card p { margin: 3px 0; }
+.tm-card a { text-decoration: none; font-weight: 700; }
+
+.tm-trail { background: #d7f9d0; border-left: 6px solid #2e9e2e; color: #14431a; }
+.tm-eat { background: #ffe7b3; border-left: 6px solid #fb8c00; color: #6d3b00; }
+.tm-sleep { background: #f6cdf0; border-left: 6px solid #ab2ec0; color: #5a0a66; }
+.tm-weather { background: #c5ecff; border-left: 6px solid #00a3e0; color: #053a52; }
+
+.tm-empty { text-align: center; color: #9aa0a6; padding: 70px 20px; font-size: 0.95rem; border: 2px dashed #e0ddd0; border-radius: 16px; }
+.tm-share { font-size: 0.8rem; color: #6b7280; margin-bottom: 10px; }
+.tm-share a { color: #1b6b2f; font-weight: 700; }
