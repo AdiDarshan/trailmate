@@ -20,11 +20,30 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import html
 import json
+import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+
+def _clean_text(s: str | None) -> str:
+    """Decode HTML entities (e.g. &#039; → ') left over from page scraping."""
+    return html.unescape(s) if s else ""
+
+
+def _clean_duration(dur: str | None) -> str:
+    """Drop bogus durations. The page regex sometimes grabs facility hours like
+    '24 שעות' / '48 שעות' (open 24h), which are not hike durations. No day-hike
+    runs 20+ hours, so treat a leading number ≥ 20 as noise."""
+    if not dur:
+        return ""
+    m = re.match(r"(\d+)", dur)
+    if m and int(m.group(1)) >= 20:
+        return ""
+    return dur
 
 # Reuse the battle-tested fetch + parse logic from the skill script.
 _PROJECT_ROOT = Path(__file__).parent.parent
@@ -54,16 +73,16 @@ def enrich_one(entry: dict) -> dict | None:
     coords = parsed.get("trailhead_coords") or {}
     return {
         "id": entry["id"],
-        "name_he": parsed.get("name_he") or entry.get("name", ""),
-        "subtitle": entry.get("subtitle", ""),
+        "name_he": _clean_text(parsed.get("name_he") or entry.get("name", "")),
+        "subtitle": _clean_text(entry.get("subtitle", "")),
         "slug": entry.get("slug", ""),
         "url": entry["url"],
-        "description_he": parsed.get("description_he", ""),
+        "description_he": _clean_text(parsed.get("description_he", "")),
         "waze_link": parsed.get("waze_link", ""),
         "lat": coords.get("lat"),
         "lng": coords.get("lng"),
         "difficulty": parsed.get("difficulty_he", ""),
-        "duration": parsed.get("duration_he", ""),
+        "duration": _clean_duration(parsed.get("duration_he", "")),
         "trail_map_image": parsed.get("trail_map_image", ""),
     }
 
