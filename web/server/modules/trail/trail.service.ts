@@ -1,20 +1,22 @@
-// searchTrails — Israel Hiking Map 3-API enrichment. Ported from
-// .agents/skills/search-israel-trails/scripts/search_trails.py.
-//
-// Secondary geographic trail search (the tiuli catalog is primary). Returns
-// real OSM trail routes with distance, elevation, difficulty, and duration.
-// No API key required.
+// Trail business logic. Two sources:
+//   - searchCatalog: the curated tiuli catalog (via TrailDbService)
+//   - searchOSM:     live Israel Hiking Map / Overpass 3-API enrichment
+// Both return plain objects; errors throw and are wrapped by the tool layer.
 
-import type { ToolDef } from "./types";
+import { trailDbService } from "./trail.dbservice";
 
-const DEFAULT_MAX = 3;
-const DEFAULT_MAX_KM = 30;
 const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 const IHM_BASE = "https://israelhiking.osm.org.il/api";
+const DEFAULT_MAX_KM = 30;
 const ROUTING_MIN_GAP = 500; // ms between routing calls
 const UA = { "User-Agent": "TrailMate/1.0 (travel planning)" };
 
 type Pt = [number, number]; // [lat, lng]
+
+function mapsLink(lat: number | null, lng: number | null): string | undefined {
+  if (lat == null || lng == null) return undefined;
+  return `https://www.google.com/maps?q=${lat},${lng}`;
+}
 
 async function getJson(url: string): Promise<any> {
   const res = await fetch(url, { headers: UA });
@@ -78,7 +80,9 @@ async function ihmSearch(query: string, language: string, maxResults: number): P
   const url = `${IHM_BASE}/search/${encodeURIComponent(query)}?language=${language}`;
   const results = await getJson(url);
   return (Array.isArray(results) ? results : [])
-    .filter((r) => String(r.icon ?? "").includes("hike") && String(r.id ?? "").startsWith("relation_"))
+    .filter(
+      (r) => String(r.icon ?? "").includes("hike") && String(r.id ?? "").startsWith("relation_"),
+    )
     .slice(0, maxResults);
 }
 
@@ -88,8 +92,7 @@ async function overpassTags(osmType: string, osmId: string): Promise<Record<stri
       ? `[out:json];relation(${osmId});out tags;`
       : `[out:json];way(${osmId});out tags;`;
   const resp = await postOverpass(data);
-  const els = resp.elements ?? [];
-  return els[0]?.tags ?? {};
+  return resp.elements?.[0]?.tags ?? {};
 }
 
 async function overpassGeometry(osmType: string, osmId: string): Promise<Pt[]> {
@@ -141,7 +144,7 @@ function carLogistics(tags: Record<string, string>, coords: Pt[]): string {
   return coords.length ? "linear — 2 cars or shuttle" : "unknown";
 }
 
-async function enrich(trail: any): Promise<Record<string, any>> {
+async function enrichOsm(trail: any): Promise<Record<string, any>> {
   const info: Record<string, any> = {
     name: trail.title,
     display_name: trail.displayName,
@@ -218,47 +221,43 @@ async function enrich(trail: any): Promise<Record<string, any>> {
   return info;
 }
 
-export const searchTrails: ToolDef = {
-  schema: {
-    type: "function",
-    function: {
-      name: "search_trails",
-      description:
-        "Secondary geographic trail search via the Israel Hiking Map / OpenStreetMap. " +
-        "Use when the tiuli catalog (search_tiuli) has no good match for an area, or " +
-        "to get computed distance, elevation, and difficulty for a named OSM trail.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Trail or area name, e.g. 'Yehudiya', 'Arbel'." },
-          max: { type: "integer", description: "Max trails (default 3, cap 5)." },
-          language: { type: "string", enum: ["en", "he"], description: "Search language. Default en." },
-        },
-        required: ["query"],
-      },
-    },
-  },
-  async execute(args: Record<string, any>) {
-    const query = String(args.query ?? "").trim();
-    if (!query) return { status: "error", message: "query is required" };
-    const maxResults = Math.min(Number(args.max ?? DEFAULT_MAX), 5);
-    const language = args.language === "he" ? "he" : "en";
-    try {
-      const trails = await ihmSearch(query, language, maxResults);
-      if (trails.length === 0) return { status: "success", trails: [] };
-      const enriched = await Promise.all(trails.map((t) => enrich(t)));
-      for (const t of enriched) {
-        if ((t.distance_km ?? 0) > DEFAULT_MAX_KM) {
-          // OSM relation geometry sums all member ways unordered → inflated
-          // distance. Flag and drop the numbers; rely on tiuli instead.
-          t.long_distance_route = true;
-          delete t.distance_km;
-          delete t.estimated_duration;
-        }
-      }
-      return { status: "success", trails: enriched };
-    } catch (e: any) {
-      return { status: "error", message: String(e?.message ?? e) };
+class TrailService {
+  /** Primary source: the curated tiuli catalog in Supabase. */
+  async searchCatalog(query: string, limit = 5) {
+    const rows = await trailDbService.search(query, Math.max(1, Math.min(20, limit)));
+    if (rows.length === 0) {
+      return { trails: [], note: `No catalog trail matched "${query}".` };
     }
-  },
-};
+    const trails = rows.map((t) => ({
+      name: t.name_he,
+      subtitle: t.subtitle,
+      difficulty: t.difficulty,
+      duration: t.duration,
+      description: t.description_he,
+      waze: t.waze_link,
+      start_maps: mapsLink(t.lat, t.lng),
+      tiuli_url: t.url,
+      trail_map_image: t.trail_map_image,
+      coordinates: t.lat != null && t.lng != null ? { lat: t.lat, lng: t.lng } : undefined,
+    }));
+    return { trails };
+  }
+
+  /** Secondary source: Israel Hiking Map / Overpass geographic search. */
+  async searchOSM(query: string, max = 3, language: "en" | "he" = "en") {
+    const trails = await ihmSearch(query, language, Math.min(max, 5));
+    if (trails.length === 0) return { trails: [] };
+    const enriched = await Promise.all(trails.map((t) => enrichOsm(t)));
+    for (const t of enriched) {
+      if ((t.distance_km ?? 0) > DEFAULT_MAX_KM) {
+        // Unordered OSM relation geometry inflates distance — drop the numbers.
+        t.long_distance_route = true;
+        delete t.distance_km;
+        delete t.estimated_duration;
+      }
+    }
+    return { trails: enriched };
+  }
+}
+
+export const trailService = new TrailService();

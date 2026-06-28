@@ -1,8 +1,5 @@
-// searchPlaces — restaurants / hotels / attractions via Nominatim + Overpass.
-// Ported from .agents/skills/search-israel-places/scripts/search_places.py.
-// No API key required.
-
-import type { ToolDef } from "./types";
+// Place business logic — restaurants / hotels / attractions via Nominatim +
+// Overpass. No DB; talks to external OSM APIs only.
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
@@ -59,7 +56,6 @@ async function geocode(area: string): Promise<BBox> {
   const lat = parseFloat(r.lat);
   const lon = parseFloat(r.lon);
 
-  // Trust the bbox only for polygons (way/relation); fabricate one for nodes.
   if (r.osm_type === "way" || r.osm_type === "relation") {
     const bb = r.boundingbox ?? [];
     if (bb.length === 4) {
@@ -105,7 +101,6 @@ function formatElement(el: any, placeType: string): Record<string, any> | null {
 
   if (el.center) result.location = { lat: el.center.lat, lng: el.center.lon };
   else if (el.type === "node") result.location = { lat: el.lat, lng: el.lon };
-
   if (result.location) {
     result.maps = `https://www.google.com/maps?q=${result.location.lat},${result.location.lng}`;
   }
@@ -124,54 +119,27 @@ function formatElement(el: any, placeType: string): Record<string, any> | null {
   return result;
 }
 
-export const searchPlaces: ToolDef = {
-  schema: {
-    type: "function",
-    function: {
-      name: "search_places",
-      description:
-        "Find real restaurants, hotels, or attractions in an Israeli area via " +
-        "OpenStreetMap. Use to fill the eat/sleep parts of an itinerary. Returns " +
-        "names, addresses, and Google Maps links.",
-      parameters: {
-        type: "object",
-        properties: {
-          area: { type: "string", description: "Area or city in Israel, e.g. 'Tiberias'." },
-          type: {
-            type: "string",
-            enum: ["restaurant", "hotel", "attraction"],
-            description: "What to search for.",
-          },
-          max: { type: "integer", description: "Max results (default 5)." },
-        },
-        required: ["area", "type"],
-      },
-    },
-  },
-  async execute(args: Record<string, any>) {
-    const area = String(args.area ?? "").trim();
-    const placeType = String(args.type ?? "restaurant").trim();
-    const maxResults = Math.max(1, Math.min(15, Number(args.max ?? DEFAULT_MAX)));
-    const tags = TYPE_TAGS[placeType];
-    if (!area) return { status: "error", message: "area is required" };
-    if (!tags) return { status: "error", message: `Unknown type: ${placeType}` };
+class PlaceService {
+  async search(area: string, type: string, max = DEFAULT_MAX) {
+    const tags = TYPE_TAGS[type];
+    if (!area) throw new Error("area is required");
+    if (!tags) throw new Error(`Unknown type: ${type}`);
+    const maxResults = Math.max(1, Math.min(15, max));
 
-    try {
-      const bbox = await geocode(area);
-      const elements = await overpassSearch(bbox, tags, maxResults);
-      const results: Record<string, any>[] = [];
-      const seen = new Set<string>();
-      for (const el of elements) {
-        const place = formatElement(el, placeType);
-        if (place && !seen.has(place.name)) {
-          seen.add(place.name);
-          results.push(place);
-        }
-        if (results.length >= maxResults) break;
+    const bbox = await geocode(area);
+    const elements = await overpassSearch(bbox, tags, maxResults);
+    const results: Record<string, any>[] = [];
+    const seen = new Set<string>();
+    for (const el of elements) {
+      const place = formatElement(el, type);
+      if (place && !seen.has(place.name)) {
+        seen.add(place.name);
+        results.push(place);
       }
-      return { status: "success", places: results };
-    } catch (e: any) {
-      return { status: "error", message: String(e?.message ?? e) };
+      if (results.length >= maxResults) break;
     }
-  },
-};
+    return { places: results };
+  }
+}
+
+export const placeService = new PlaceService();

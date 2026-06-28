@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Day, Itinerary, Place, Trail } from "@/lib/types";
+import type { Day, Itinerary, Place, Trail } from "@/server/shared/types";
 
 function Link({ text, url }: { text: string; url?: string }) {
   if (!url) return <>{text}</>;

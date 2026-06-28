@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage } from "@/server/shared/types";
 
 // Render assistant/user text as GitHub-flavoured Markdown. Links open in a new
 // tab; everything else (headings, bold, lists) renders properly instead of

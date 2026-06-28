@@ -1,6 +1,5 @@
-// Shared types for the itinerary / notebook. Mirrors the structure the
-// save_itinerary tool produced in the Python app, so the notebook UI logic
-// ports over cleanly.
+// Shared domain types, used by both the server layer and the React client
+// (type-only imports — erased at build, so no client/server runtime coupling).
 
 export interface Place {
   name?: string;
@@ -37,7 +36,6 @@ export interface Itinerary {
   days: Day[];
 }
 
-// Chat message shape shared between client and server.
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;

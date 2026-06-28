@@ -1,7 +1,5 @@
-// Weather tool — Open-Meteo forecast / historical proxy. Ported from
-// .agents/skills/plan-israel-trip/scripts/get_weather.py. No API key needed.
-
-import type { ToolDef } from "./types";
+// Weather business logic — Open-Meteo forecast / historical proxy. No DB;
+// talks to Nominatim (geocode) + Open-Meteo only.
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
@@ -53,12 +51,7 @@ function addDays(d: Date, n: number): Date {
   return x;
 }
 
-async function fetchRaw(
-  lat: number,
-  lng: number,
-  start: Date,
-  days: number,
-): Promise<[any, boolean]> {
+async function fetchRaw(lat: number, lng: number, start: Date, days: number): Promise<[any, boolean]> {
   const today = new Date(isoDate(new Date()));
   const offset = Math.round((start.getTime() - today.getTime()) / 86_400_000);
 
@@ -80,10 +73,8 @@ async function fetchRaw(
     return [raw, false];
   }
 
-  // Historical proxy: same calendar window from the most recent past year.
   let proxyYear = start.getUTCFullYear() - 1;
-  const mk = (y: number) =>
-    new Date(Date.UTC(y, start.getUTCMonth(), start.getUTCDate()));
+  const mk = (y: number) => new Date(Date.UTC(y, start.getUTCMonth(), start.getUTCDate()));
   let proxyStart = mk(proxyYear);
   while (proxyStart >= today) {
     proxyYear -= 1;
@@ -106,13 +97,7 @@ async function fetchRaw(
   return [raw, true];
 }
 
-function formatForecast(
-  raw: any,
-  displayName: string,
-  lat: number,
-  lng: number,
-  historical: boolean,
-) {
+function formatForecast(raw: any, displayName: string, lat: number, lng: number, historical: boolean) {
   const daily = raw.daily ?? {};
   const dates: string[] = daily.time ?? [];
   const maxT = daily.temperature_2m_max ?? [];
@@ -127,12 +112,10 @@ function formatForecast(
     const windKmh = wind[i] ?? 0;
     const tempMax = maxT[i] ?? null;
     const advice: string[] = [];
-    if ([61, 63, 65, 80, 81, 82].includes(code))
-      advice.push("Rain expected — bring waterproof jacket");
+    if ([61, 63, 65, 80, 81, 82].includes(code)) advice.push("Rain expected — bring waterproof jacket");
     if ([71, 73, 75].includes(code)) advice.push("Snow possible — trails may be closed");
     if (windKmh > 40) advice.push("Strong winds — avoid exposed ridges");
-    if (tempMax !== null && tempMax > 33)
-      advice.push("Very hot — start hike early, carry extra water");
+    if (tempMax !== null && tempMax > 33) advice.push("Very hot — start hike early, carry extra water");
     if (advice.length === 0) advice.push("Good conditions for hiking");
     return {
       date: d,
@@ -145,50 +128,18 @@ function formatForecast(
     };
   });
 
-  return {
-    location: displayName,
-    coordinates: { lat, lng },
-    historical,
-    forecast: out,
-  };
+  return { location: displayName, coordinates: { lat, lng }, historical, forecast: out };
 }
 
-export const getWeather: ToolDef = {
-  schema: {
-    type: "function",
-    function: {
-      name: "get_weather",
-      description:
-        "Fetch a weather forecast for any location and date in Israel. Use " +
-        "proactively whenever dates and outdoor activity are involved. Within " +
-        "16 days returns a live forecast; further out returns a historical " +
-        "proxy (same calendar period, previous year) flagged 'historical: true' " +
-        "— tell the user when this applies.",
-      parameters: {
-        type: "object",
-        properties: {
-          location: { type: "string", description: "City or region in Israel." },
-          date: {
-            type: "string",
-            description: "Trip start date YYYY-MM-DD. Omit for today.",
-          },
-          days: { type: "integer", description: "Days to forecast (1–16). Default 3." },
-        },
-        required: ["location"],
-      },
-    },
-  },
-  async execute(args: Record<string, any>) {
-    const location = String(args.location ?? "").trim();
-    if (!location) return { status: "error", message: "location is required" };
-    const days = Math.max(1, Math.min(16, Number(args.days ?? 3)));
-    const start = args.date ? new Date(isoDate(new Date(args.date))) : new Date(isoDate(new Date()));
-    try {
-      const [lat, lng, name] = await geocode(location);
-      const [raw, historical] = await fetchRaw(lat, lng, start, days);
-      return formatForecast(raw, name, lat, lng, historical);
-    } catch (e: any) {
-      return { status: "error", message: String(e?.message ?? e) };
-    }
-  },
-};
+class WeatherService {
+  async forecast(location: string, date?: string, days = 3) {
+    if (!location) throw new Error("location is required");
+    const d = Math.max(1, Math.min(16, days));
+    const start = date ? new Date(isoDate(new Date(date))) : new Date(isoDate(new Date()));
+    const [lat, lng, name] = await geocode(location);
+    const [raw, historical] = await fetchRaw(lat, lng, start, d);
+    return formatForecast(raw, name, lat, lng, historical);
+  }
+}
+
+export const weatherService = new WeatherService();

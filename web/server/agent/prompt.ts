@@ -1,6 +1,4 @@
-// System prompt for the TrailMate agent. Distilled from the Python harness
-// prompt plus the intent of the plan-israel-trip / search-* skills, now that
-// those skills are real typed tools instead of markdown instructions.
+// System prompt for the TrailMate agent.
 
 export function buildSystemPrompt(): string {
   const today = new Date().toISOString().slice(0, 10);
@@ -14,7 +12,7 @@ export function buildSystemPrompt(): string {
     "- search_tiuli: your PRIMARY trail source — a curated catalog of 348 real",
     "  Israeli trails with Hebrew descriptions, Waze links, coords, difficulty.",
     "  The catalog is Hebrew; translate area names to Hebrew when searching",
-    "  (e.g. Galilee→גליל, Ein Gedi→עין גדי, Carmel→כרמל).",
+    "  (e.g. Galilee->גליל, Ein Gedi->עין גדי, Carmel->כרמל).",
     "- search_trails: secondary geographic search (OpenStreetMap) for trails by",
     "  area when the catalog has no good match, or to get distance/elevation.",
     "- search_places: restaurants, hotels, attractions for the eat/sleep parts.",
