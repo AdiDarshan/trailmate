@@ -41,7 +41,7 @@ st.markdown(
     .stApp { background: #fffdf6; }
 
     /* Pane headers */
-    .tm-pane-title { font-size: 1.35rem; font-weight: 800; margin: 0 0 2px 0; }
+    .tm-pane-title { font-size: 1.35rem; font-weight: 800; margin: 0 0 2px 0; color: #1b3a1f; }
     .tm-pane-sub   { color: #6b7280; font-size: 0.85rem; margin-bottom: 8px; }
 
     /* Keep chat + notebook text readable on the light background */
@@ -155,7 +155,7 @@ def _trail_card(trail: dict | None) -> str:
         return _card("tm-trail", "🥾", "Where to Hike", "<p>No trail selected yet</p>")
 
     name = trail.get("name", "Trail")
-    parts: list[str] = []
+    parts: list[str] = [f'<p style="font-size:1rem;font-weight:800;">{name}</p>']
 
     nav = []
     if trail.get("start_maps"):
@@ -267,20 +267,6 @@ if "messages" not in st.session_state:
 if "pending" not in st.session_state:
     st.session_state.pending = None  # a user prompt awaiting an agent reply
 
-# ── Chat input (top level so Streamlit pins it to the page bottom) ─────────────
-
-prompt = st.chat_input("Where do you want to travel? e.g. 'Plan a trip in the Galilee'")
-
-if prompt:
-    if not os.getenv("OPENAI_API_KEY"):
-        st.error("OPENAI_API_KEY is not set. Add it to your .env file and restart.")
-        st.stop()
-    # Show the user's message right away: store it, mark it pending, and rerun
-    # so the chat repaints before the (blocking) agent call begins.
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    st.session_state.pending = prompt
-    st.rerun()
-
 # ── Two-pane layout ────────────────────────────────────────────────────────────
 
 col_chat, col_notebook = st.columns([1.05, 1], gap="large")
@@ -351,3 +337,16 @@ with col_chat:
         st.session_state.pending = None
         # Rerun so the answer renders as a normal message and the notebook refreshes.
         st.rerun()
+
+    # Chat input lives inside the left column so it spans only the chat pane.
+    prompt = st.chat_input("Where do you want to travel? e.g. 'Plan a trip in the Galilee'")
+
+if prompt:
+    if not os.getenv("OPENAI_API_KEY"):
+        st.error("OPENAI_API_KEY is not set. Add it to your .env file and restart.")
+        st.stop()
+    # Show the user's message right away: store it, mark it pending, and rerun
+    # so the chat repaints before the (blocking) agent call begins.
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.session_state.pending = prompt
+    st.rerun()
