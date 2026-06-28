@@ -16,7 +16,7 @@ function Home() {
   const [chatKey, setChatKey] = useState(0); // bump to reset the chat
 
   const loadTrips = useCallback(async () => {
-    const res = await fetch("/api/trips");
+    const res = await fetch("/api/trips", { cache: "no-store" });
     if (res.ok) setTrips((await res.json()).trips ?? []);
   }, []);
 
@@ -33,7 +33,7 @@ function Home() {
 
   // Open a saved trip: load it, reset the chat, mark it the current trip.
   const openTrip = useCallback(async (id: string) => {
-    const res = await fetch(`/api/trip/${id}`);
+    const res = await fetch(`/api/trip/${id}`, { cache: "no-store" });
     if (!res.ok) return;
     const data = (await res.json()) as Itinerary;
     setItinerary(data);

@@ -1,7 +1,12 @@
-// Data access for the `trips` table. No business logic — just CRUD. User-scoped
-// methods filter by user_id (enforced in code; RLS is defense-in-depth).
+// Data access for the `trips` table.
+//
+// User-facing reads/writes go through the request's RLS-bound client (the
+// signed-in user's session), so Postgres enforces "you can only touch your own
+// trips" at the database — not just in app code. System tasks (the reminder
+// cron, which has no user session) use the service-role client.
 
 import { supabase } from "../../db/supabase";
+import { createAuthClient } from "../../db/supabase-auth";
 import type { Itinerary, TripSummary } from "../../shared/types";
 
 interface TripRecord {
@@ -19,15 +24,19 @@ export interface TripWithMeta {
 }
 
 class TripDbService {
-  /** Insert or update a trip (owner-stamped). */
+  // ── User-scoped (RLS-enforced) ───────────────────────────────────────────
+
+  /** Insert or update a trip as the signed-in user (RLS checks ownership). */
   async upsert(record: TripRecord): Promise<void> {
-    const { error } = await supabase.from("trips").upsert(record);
+    const db = await createAuthClient();
+    const { error } = await db.from("trips").upsert(record);
     if (error) throw new Error(error.message);
   }
 
-  /** A user's trips, newest first, for the sidebar. */
+  /** The signed-in user's trips, newest first. RLS guarantees isolation. */
   async listByUser(userId: string): Promise<TripSummary[]> {
-    const { data, error } = await supabase
+    const db = await createAuthClient();
+    const { data, error } = await db
       .from("trips")
       .select("id,title,dates,created_at")
       .eq("user_id", userId)
@@ -36,9 +45,10 @@ class TripDbService {
     return (data ?? []).map((r) => ({ id: r.id, title: r.title, dates: r.dates ?? undefined }));
   }
 
-  /** Load a trip only if it belongs to the user. */
+  /** Load a trip the signed-in user owns (RLS returns nothing otherwise). */
   async getByIdForUser(id: string, userId: string): Promise<Itinerary | null> {
-    const { data, error } = await supabase
+    const db = await createAuthClient();
+    const { data, error } = await db
       .from("trips")
       .select("data")
       .eq("id", id)
@@ -47,6 +57,8 @@ class TripDbService {
     if (error || !data) return null;
     return data.data as Itinerary;
   }
+
+  // ── System-scoped (service-role; no user session) ────────────────────────
 
   /** All of a user's trips with start_date — used by the reminder scheduler. */
   async listByUserWithMeta(userId: string): Promise<Array<{ id: string } & TripWithMeta>> {
@@ -63,7 +75,7 @@ class TripDbService {
     }));
   }
 
-  /** Itinerary + machine start_date — used by the reminder scheduler (system). */
+  /** Itinerary + machine start_date for one trip — reminder scheduler (system). */
   async getWithMeta(id: string): Promise<TripWithMeta | null> {
     const { data, error } = await supabase
       .from("trips")
