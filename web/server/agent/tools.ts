@@ -146,7 +146,11 @@ export const TOOLS: Record<string, ToolDef> = {
           type: "object",
           properties: {
             title: { type: "string", description: "e.g. '2-Day Trip: Galilee'" },
-            dates: { type: "string", description: "e.g. 'June 23–24, 2026'" },
+            dates: { type: "string", description: "Human display range, e.g. 'June 23–24, 2026'" },
+            start_date: {
+              type: "string",
+              description: "Machine date of day 1 as YYYY-MM-DD (e.g. '2026-06-27'). Required for reminders.",
+            },
             days: { type: "array", description: "One entry per day.", items: saveTripDayItem },
           },
           required: ["title", "days"],

@@ -20,6 +20,8 @@ export function buildSystemPrompt(): string {
     "  the result has historical:true, tell the user it's a climate proxy, not a",
     "  forecast.",
     "- save_trip: call ONCE at the very end, after presenting the full itinerary.",
+    "  Always include start_date (YYYY-MM-DD, the real calendar date of day 1) so",
+    "  trip reminders can be scheduled.",
     "",
     "TRIP PLANNING:",
     "- Always produce a concrete, day-by-day itinerary: trail, meals, accommodation,",

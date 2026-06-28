@@ -157,6 +157,17 @@ export default function Notebook({ tripId }: { tripId: string | null }) {
           Share: <a href={shareUrl}>{shareUrl}</a>
         </div>
       )}
+      {tripId && process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME && (
+        <div className="tm-share">
+          <a
+            href={`https://t.me/${process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME}?start=${tripId}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            🔔 Get reminders on Telegram
+          </a>
+        </div>
+      )}
       <div className="tm-day-tabs">
         {days.map((d, i) => (
           <button

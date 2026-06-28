@@ -7,6 +7,12 @@ interface TripRecord {
   id: string;
   title: string;
   dates: string | null;
+  start_date: string | null; // ISO YYYY-MM-DD, for the reminder scheduler
+  data: Itinerary;
+}
+
+export interface TripWithMeta {
+  start_date: string | null;
   data: Itinerary;
 }
 
@@ -24,6 +30,17 @@ class TripDbService {
       .single();
     if (error || !data) return null;
     return data.data as Itinerary;
+  }
+
+  /** Itinerary plus the machine start_date — used by the reminder scheduler. */
+  async getWithMeta(id: string): Promise<TripWithMeta | null> {
+    const { data, error } = await supabase
+      .from("trips")
+      .select("start_date,data")
+      .eq("id", id)
+      .single();
+    if (error || !data) return null;
+    return { start_date: data.start_date ?? null, data: data.data as Itinerary };
   }
 }
 
