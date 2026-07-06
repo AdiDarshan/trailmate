@@ -3,7 +3,22 @@
 //   - searchOSM:     live Israel Hiking Map / Overpass 3-API enrichment
 // Both return plain objects; errors throw and are wrapped by the tool layer.
 
-import { trailDbService } from "./trail.dbservice";
+import OpenAI from "openai";
+import { trailDbService, type TrailFilters, type TrailRow } from "./trail.dbservice";
+import { normalizeRegion } from "./gazetteer";
+
+const EMBED_MODEL = "text-embedding-3-small";
+
+/** Embed a query string for semantic trail matching. Returns null if unavailable. */
+async function embedQuery(text: string): Promise<number[] | null> {
+  if (!process.env.OPENAI_API_KEY || !text.trim()) return null;
+  try {
+    const res = await new OpenAI().embeddings.create({ model: EMBED_MODEL, input: text });
+    return res.data[0]?.embedding ?? null;
+  } catch {
+    return null;
+  }
+}
 
 const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 const IHM_BASE = "https://israelhiking.osm.org.il/api";
@@ -221,26 +236,68 @@ async function enrichOsm(trail: any): Promise<Record<string, any>> {
   return info;
 }
 
+function toTrail(t: TrailRow) {
+  return {
+    name: t.name_he,
+    subtitle: t.subtitle,
+    region: t.region_he ?? t.area_he ?? undefined,
+    difficulty: t.difficulty,
+    difficulty_level: t.difficulty_level ?? undefined,
+    distance_km: t.distance_km ?? undefined,
+    duration: t.duration,
+    features: t.features ?? undefined,
+    description: t.description_he,
+    waze: t.waze_link,
+    start_maps: mapsLink(t.lat, t.lng),
+    tiuli_url: t.url,
+    trail_map_image: t.trail_map_image,
+    coordinates: t.lat != null && t.lng != null ? { lat: t.lat, lng: t.lng } : undefined,
+    match_score: t.similarity != null ? Math.round(t.similarity * 100) / 100 : undefined,
+  };
+}
+
 class TrailService {
-  /** Primary source: the curated tiuli catalog in Supabase. */
-  async searchCatalog(query: string, limit = 5) {
-    const rows = await trailDbService.search(query, Math.max(1, Math.min(20, limit)));
-    if (rows.length === 0) {
-      return { trails: [], note: `No catalog trail matched "${query}".` };
+  /**
+   * Primary source: the curated tiuli catalog in Supabase.
+   *
+   * Semantic + filtered: embeds `query` and ranks by similarity, after hard-filtering
+   * on region / distance / difficulty / features. Falls back to trigram text search
+   * when embeddings are unavailable or the filtered semantic search finds nothing.
+   */
+  async searchCatalog(query: string, opts: TrailFilters & { limit?: number } = {}) {
+    const limit = Math.max(1, Math.min(20, opts.limit ?? 5));
+    const filters: TrailFilters = {
+      // Resolve "Golan"/"North"/etc. → the Hebrew token the catalog stores.
+      region: normalizeRegion(opts.region),
+      maxKm: opts.maxKm,
+      minKm: opts.minKm,
+      difficultyMax: opts.difficultyMax,
+      features: opts.features,
+    };
+    const hasFilters =
+      filters.region != null ||
+      filters.maxKm != null ||
+      filters.minKm != null ||
+      filters.difficultyMax != null ||
+      (filters.features?.length ?? 0) > 0;
+
+    const embedding = await embedQuery(query);
+    if (embedding) {
+      const rows = await trailDbService.matchSemantic(embedding, filters, limit);
+      if (rows.length > 0) return { trails: rows.map(toTrail), matched_by: "semantic" };
+      if (hasFilters) {
+        // Filters may have excluded everything (e.g. no ≤5 km trail in that region).
+        return {
+          trails: [],
+          note: `No catalog trail matched the filters for "${query}". Relax the distance/difficulty/region constraints or try search_trails.`,
+        };
+      }
     }
-    const trails = rows.map((t) => ({
-      name: t.name_he,
-      subtitle: t.subtitle,
-      difficulty: t.difficulty,
-      duration: t.duration,
-      description: t.description_he,
-      waze: t.waze_link,
-      start_maps: mapsLink(t.lat, t.lng),
-      tiuli_url: t.url,
-      trail_map_image: t.trail_map_image,
-      coordinates: t.lat != null && t.lng != null ? { lat: t.lat, lng: t.lng } : undefined,
-    }));
-    return { trails };
+
+    // Fallback: plain text search (no key, embedding error, or no semantic hits).
+    const rows = await trailDbService.search(query, limit);
+    if (rows.length === 0) return { trails: [], note: `No catalog trail matched "${query}".` };
+    return { trails: rows.map(toTrail), matched_by: "text" };
   }
 
   /** Secondary source: Israel Hiking Map / Overpass geographic search. */

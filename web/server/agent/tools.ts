@@ -47,20 +47,62 @@ export const TOOLS: Record<string, ToolDef> = {
         name: "search_tiuli",
         description:
           "Search TrailMate's curated catalog of 348 real Israeli hiking trails " +
-          "(from tiuli.com), each with a Hebrew description, Waze link, trailhead " +
-          "coordinates, difficulty, and duration. Primary trail source. The catalog " +
-          "is Hebrew — pass Hebrew place names when possible (e.g. 'גליל', 'עין גדי').",
+          "(from tiuli.com). PRIMARY trail source. Ranks by semantic similarity to " +
+          "`query`, then narrows with optional hard filters. Put the free-form intent " +
+          "(scenery, vibe, 'waterfall hike with shade') in `query`; put measurable " +
+          "constraints in the filter params. `query` is matched semantically in both " +
+          "Hebrew and English, but Hebrew place names still help (e.g. 'גליל', 'עין גדי'). " +
+          "Each result includes region, difficulty_level (1-5), distance_km, and features. " +
+          "If filters return nothing, relax them or use search_trails.",
         parameters: {
           type: "object",
           properties: {
-            query: { type: "string", description: "Trail name, region, or keyword (Hebrew preferred)." },
-            limit: { type: "integer", description: "Max trails to return (default 5)." },
+            query: {
+              type: "string",
+              description:
+                "Free-form intent / scenery / trail name (Hebrew or English), e.g. " +
+                "'שמורה עם מים ומפלים' or 'easy family loop near the Galilee'.",
+            },
+            region: {
+              type: "string",
+              description:
+                "Restrict to an area/region. Pass the place the user named, in English " +
+                "OR Hebrew — 'Golan', 'North', 'Western Galilee', 'Negev', 'גליל', 'הגולן'. " +
+                "The server resolves it to the catalog's geography. Omit to search everywhere.",
+            },
+            max_km: { type: "number", description: "Max trail length in km (e.g. 6 for a short hike)." },
+            min_km: { type: "number", description: "Min trail length in km." },
+            difficulty_max: {
+              type: "integer",
+              description: "Hardest acceptable level: 1=very easy, 2=easy, 3=moderate, 4=hard, 5=very hard.",
+            },
+            features: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: [
+                  "water", "spring", "loop", "linear", "family", "kids", "stroller",
+                  "dog", "bike", "romantic", "urban", "serious_hikers", "viewpoint",
+                  "bloom", "beach", "picnic",
+                ],
+              },
+              description: "Required features — a trail must have ALL of them.",
+            },
+            limit: { type: "integer", description: "Max trails to return (default 5, cap 20)." },
           },
           required: ["query"],
         },
       },
     },
-    execute: (a) => trailService.searchCatalog(String(a.query ?? ""), Number(a.limit ?? 5)),
+    execute: (a) =>
+      trailService.searchCatalog(String(a.query ?? ""), {
+        region: a.region ? String(a.region) : undefined,
+        maxKm: a.max_km != null ? Number(a.max_km) : undefined,
+        minKm: a.min_km != null ? Number(a.min_km) : undefined,
+        difficultyMax: a.difficulty_max != null ? Number(a.difficulty_max) : undefined,
+        features: Array.isArray(a.features) ? a.features.map(String) : undefined,
+        limit: a.limit != null ? Number(a.limit) : undefined,
+      }),
   },
 
   search_trails: {
