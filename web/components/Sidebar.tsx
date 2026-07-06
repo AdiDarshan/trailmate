@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Compass, Plus, Map, Send } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
+import About from "./About";
 import type { TripSummary } from "@/server/shared/types";
 
 export default function Sidebar({
@@ -19,6 +21,20 @@ export default function Sidebar({
   onHome: () => void;
   className?: string;
 }) {
+  // The signed-in user, so the footer shows who's connected (not a generic "Account").
+  const [user, setUser] = useState<{ name: string; email: string; initial: string } | null>(null);
+  useEffect(() => {
+    createClient()
+      .auth.getUser()
+      .then(({ data }) => {
+        const u = data.user;
+        if (!u) return;
+        const meta = (u.user_metadata ?? {}) as { full_name?: string; name?: string };
+        const name = meta.full_name || meta.name || u.email || "Account";
+        setUser({ name, email: u.email ?? "", initial: (name[0] || "?").toUpperCase() });
+      });
+  }, []);
+
   async function signOut() {
     const supabase = createClient();
     await supabase.auth.signOut();
@@ -74,13 +90,16 @@ export default function Sidebar({
       </div>
 
       <div className="tm-rail-foot">
+        <About />
         <button className="tm-rail-btn" onClick={connectTelegram}>
           <Send size={14} strokeWidth={1.8} />
           Connect Telegram
         </button>
         <div className="tm-user">
-          <div className="tm-avatar">T</div>
-          <div className="tm-user-name">Account</div>
+          <div className="tm-avatar">{user?.initial ?? "·"}</div>
+          <div className="tm-user-name" title={user?.email || undefined}>
+            {user?.name ?? "Account"}
+          </div>
           <button className="tm-signout" onClick={signOut}>
             Sign out
           </button>

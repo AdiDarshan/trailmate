@@ -1,0 +1,13 @@
+- app should work ete, no missing features.
+- option to search by current location, find closest options.
+- avoid suggest trips that already saved.
+- changing date of trip change the wether appropriately.
+- info button that explains what app do and how to use it.
+- maybe add on first time you get in a explenation - how to use it?
+- see who connected - not just 'account'
+- see on map the places that chose, according to the day shown. very interseting and nice frature.
+- open amud anan on the area chosen?
+- share the trip feature
+- prompt engenner to refine
+- mobile should work too
+- i want to enrich trip options - see hoe osm / ihm can help
