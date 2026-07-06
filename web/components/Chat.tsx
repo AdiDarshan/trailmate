@@ -3,19 +3,23 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Compass, Sparkles, ArrowUp } from "lucide-react";
+import { Compass, Sparkles, ArrowUp, Check, LoaderCircle } from "lucide-react";
 import type { ChatMessage } from "@/server/shared/types";
+import type { AgentStep } from "@/lib/useAgent";
 
 // Standalone conversation view. Shown while the agent is still talking things
 // through (answering, asking questions) — before it commits to a concrete plan.
-// Once a concrete itinerary arrives, page.tsx swaps this for the Notebook.
+// Once a concrete itinerary arrives, page.tsx swaps this for the Notebook. While
+// the agent runs tools, a live checklist (`steps`) shows what it's doing.
 export default function Chat({
   messages,
   busy,
+  steps,
   onSend,
 }: {
   messages: ChatMessage[];
   busy: boolean;
+  steps: AgentStep[];
   onSend: (text: string) => void;
 }) {
   const [value, setValue] = useState("");
@@ -23,7 +27,7 @@ export default function Chat({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, steps]);
 
   function submit(text: string) {
     const t = text.trim();
@@ -48,29 +52,65 @@ export default function Chat({
           margin: "0 auto",
         }}
       >
-        {messages.map((m, i) => (
-          <div key={i} className={`tm-msg ${m.role === "user" ? "tm-msg-user" : ""}`}>
-            {m.role === "assistant" && (
-              <div className="tm-msg-avatar">
-                <Compass size={14} strokeWidth={1.8} />
-              </div>
-            )}
-            <div className="tm-msg-body">
-              {m.content ? (
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{ a: (p) => <a {...p} target="_blank" rel="noreferrer" /> }}
-                >
-                  {m.content}
-                </ReactMarkdown>
-              ) : busy && i === messages.length - 1 ? (
-                "…"
-              ) : (
-                ""
+        {messages.map((m, i) => {
+          // Skip an empty assistant bubble unless it's the live "…" placeholder
+          // (busy, last, and no checklist showing) — the checklist stands in for it.
+          const isPlaceholder = busy && i === messages.length - 1 && steps.length === 0;
+          if (m.role === "assistant" && !m.content && !isPlaceholder) return null;
+          return (
+            <div key={i} className={`tm-msg ${m.role === "user" ? "tm-msg-user" : ""}`}>
+              {m.role === "assistant" && (
+                <div className="tm-msg-avatar">
+                  <Compass size={14} strokeWidth={1.8} />
+                </div>
               )}
+              <div className="tm-msg-body">
+                {m.content ? (
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{ a: (p) => <a {...p} target="_blank" rel="noreferrer" /> }}
+                  >
+                    {m.content}
+                  </ReactMarkdown>
+                ) : (
+                  "…"
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {steps.length > 0 && (
+          <div className="tm-msg">
+            <div className="tm-msg-avatar">
+              <Compass size={14} strokeWidth={1.8} />
+            </div>
+            <div className="tm-msg-body" style={{ width: "100%" }}>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
+                {busy ? "Working on your trip…" : "Here's what I did"}
+              </div>
+              {steps.map((s, i) => {
+                const inProgress = busy && i === steps.length - 1;
+                return (
+                  <div
+                    key={s.key}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 13.5 }}
+                  >
+                    {inProgress ? (
+                      <LoaderCircle size={14} className="tm-spin" color="var(--olive)" />
+                    ) : (
+                      <Check size={14} color="var(--olive)" strokeWidth={2.2} />
+                    )}
+                    <span style={{ color: inProgress ? "var(--text)" : "var(--muted)" }}>
+                      {s.label}
+                      {inProgress ? "…" : ""}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
-        ))}
+        )}
         <div ref={endRef} />
       </div>
 

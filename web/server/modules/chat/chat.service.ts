@@ -60,9 +60,20 @@ function mergeEditedItinerary(oldIt: Itinerary, newIt: Itinerary): Itinerary {
 
 export type AgentEvent =
   | { type: "text"; v: string }
+  | { type: "step"; key: string; label: string } // a tool the agent ran → live checklist row
   | { type: "itinerary"; data: Itinerary }
   | { type: "error"; message: string }
   | { type: "done" };
+
+// Friendly labels for the inline "working" checklist. Keyed so repeated calls of
+// the same kind (e.g. two trail searches for a 2-day trip) show as one row.
+const STEP_LABELS: Record<string, { key: string; label: string }> = {
+  search_tiuli: { key: "trail", label: "Finding a trail" },
+  search_trails: { key: "trail", label: "Finding a trail" },
+  search_places: { key: "places", label: "Picking food & a place to sleep" },
+  get_weather: { key: "weather", label: "Checking the weather" },
+  present_itinerary: { key: "itinerary", label: "Putting your itinerary together" },
+};
 
 type ChatParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
@@ -87,6 +98,8 @@ class ChatService {
     messages.push(...history.map((m) => ({ role: m.role, content: m.content }) as ChatParam));
 
     let presented: Itinerary | null = null;
+    let usedTrailSearch = false; // once true, the agent is building — suppress chat prose
+    const emittedSteps = new Set<string>();
 
     for (let iter = 1; iter <= MAX_ITERATIONS; iter++) {
       const stream = await client.chat.completions.create({
@@ -105,7 +118,10 @@ class ChatService {
         const delta = choice.delta;
         if (delta?.content) {
           content += delta.content;
-          yield { type: "text", v: delta.content };
+          // Once the agent is building a trip, its text is the plan being narrated —
+          // we don't want that in chat (it belongs in the notebook). Keep it in
+          // `content` for context, but don't stream it to the UI.
+          if (!usedTrailSearch) yield { type: "text", v: delta.content };
         }
         if (delta?.tool_calls) {
           for (const tc of delta.tool_calls) {
@@ -138,6 +154,14 @@ class ChatService {
           } catch {
             parsed = {};
           }
+          if (c.name === "search_tiuli" || c.name === "search_trails") usedTrailSearch = true;
+          // Live checklist: surface each kind of tool once, before it runs, so the
+          // UI shows "Finding a trail…", "Checking the weather…" as work happens.
+          const step = STEP_LABELS[c.name];
+          if (step && !emittedSteps.has(step.key)) {
+            emittedSteps.add(step.key);
+            yield { type: "step", key: step.key, label: step.label };
+          }
           const result = await executeTool(c.name, parsed);
           if (c.name === "present_itinerary" && result && typeof result === "object" && (result as any).itinerary) {
             const fresh = (result as any).itinerary as Itinerary;
@@ -147,20 +171,78 @@ class ChatService {
           }
           messages.push({ role: "tool", tool_call_id: c.id, content: JSON.stringify(result) });
         }
+
+        // Concrete plan in hand → open the notebook and STOP. Never give the model
+        // another turn to re-type the itinerary as chat prose.
+        if (isConcreteItinerary(presented)) {
+          yield { type: "itinerary", data: presented as Itinerary };
+          yield { type: "done" };
+          return;
+        }
         continue;
       }
 
-      // No tool calls → the streamed content was the final answer. Only surface an
-      // itinerary if the agent genuinely presented a concrete plan (≥1 day with a
-      // trail). Otherwise it was a conversational answer — the UI stays in chat and
-      // the user keeps talking until a real plan emerges. We do NOT fabricate one.
-      if (isConcreteItinerary(presented)) yield { type: "itinerary", data: presented as Itinerary };
+      // No tool calls → the streamed text was the final answer.
+      if (isConcreteItinerary(presented)) {
+        yield { type: "itinerary", data: presented as Itinerary };
+      } else if (usedTrailSearch) {
+        // The agent planned (searched trails) but didn't hand back a structured
+        // itinerary — it wrote the plan as prose (which we suppressed). Convert that
+        // into a real present_itinerary so the notebook opens instead of nothing.
+        messages.push({ role: "assistant", content });
+        let forced = await this.forcePresent(client, messages);
+        if (forced && currentTrip) forced = mergeEditedItinerary(currentTrip, forced);
+        if (isConcreteItinerary(forced)) {
+          yield { type: "itinerary", data: forced as Itinerary };
+        } else if (content.trim()) {
+          // Couldn't structure it — don't swallow the answer; show the text.
+          yield { type: "text", v: content };
+        }
+      }
       yield { type: "done" };
       return;
     }
 
     yield { type: "error", message: "Agent exceeded maximum execution depth." };
     yield { type: "done" };
+  }
+
+  // Force a structured present_itinerary out of the plan the model just described
+  // in prose. Used as a safety net when the agent planned but didn't return a
+  // concrete itinerary on its own. Returns null if it still can't produce one.
+  private async forcePresent(client: OpenAI, messages: ChatParam[]): Promise<Itinerary | null> {
+    try {
+      const res = await client.chat.completions.create({
+        model: MODEL,
+        messages: [
+          ...messages,
+          {
+            role: "user",
+            content:
+              "Output ONLY the present_itinerary tool call for the trip you just planned — " +
+              "full structured day-by-day data (each day must include a trail with a name, " +
+              "plus meals, a place to sleep, and the weather). Write no other text.",
+          },
+        ],
+        tools: TOOL_SCHEMAS,
+        tool_choice: { type: "function", function: { name: "present_itinerary" } },
+      });
+      const call = res.choices[0]?.message?.tool_calls?.[0];
+      if (!call) return null;
+      let parsed: Record<string, any> = {};
+      try {
+        parsed = call.function.arguments ? JSON.parse(call.function.arguments) : {};
+      } catch {
+        return null;
+      }
+      const result = await executeTool("present_itinerary", parsed);
+      if (result && typeof result === "object" && (result as any).itinerary) {
+        return (result as any).itinerary as Itinerary;
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 }
 

@@ -89,6 +89,7 @@ button { font-family: inherit; }
   gap: 0;
 }
 .tm-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 26px; }
+.tm-brand-btn { background: none; border: 0; padding: 0; cursor: pointer; text-align: left; font: inherit; }
 .tm-brand-mark {
   width: 34px; height: 34px; border-radius: 10px; background: var(--ink);
   display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
@@ -364,6 +365,8 @@ button { font-family: inherit; }
 }
 
 @keyframes tmpulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 0.9; } }
+@keyframes tmspin { to { transform: rotate(360deg); } }
+.tm-spin { animation: tmspin 0.8s linear infinite; }
 
 /* ────────────────────────── Mobile ────────────────────────── */
 .tm-topbar { display: none; }

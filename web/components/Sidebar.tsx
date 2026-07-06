@@ -9,12 +9,14 @@ export default function Sidebar({
   activeId,
   onOpen,
   onNew,
+  onHome,
   className = "",
 }: {
   trips: TripSummary[];
   activeId: string | null;
   onOpen: (id: string) => void;
   onNew: () => void;
+  onHome: () => void;
   className?: string;
 }) {
   async function signOut() {
@@ -32,12 +34,12 @@ export default function Sidebar({
 
   return (
     <aside className={`tm-rail ${className}`}>
-      <div className="tm-brand">
+      <button type="button" className="tm-brand tm-brand-btn" onClick={onHome} aria-label="Go to home">
         <div className="tm-brand-mark">
           <Compass size={18} color="var(--sage)" strokeWidth={1.8} />
         </div>
         <div className="tm-brand-name">TrailMate</div>
-      </div>
+      </button>
 
       <div className="tm-rail-head">
         <span className="tm-eyebrow">My trips</span>

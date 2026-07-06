@@ -88,12 +88,12 @@ function Home() {
         <button className="tm-icon-btn" onClick={() => setRailOpen(true)} aria-label="Menu">
           <Menu size={18} strokeWidth={1.8} />
         </button>
-        <div className="tm-brand" style={{ margin: 0 }}>
+        <button type="button" className="tm-brand tm-brand-btn" style={{ margin: 0 }} onClick={newTrip} aria-label="Go to home">
           <div className="tm-brand-mark" style={{ width: 28, height: 28, borderRadius: 8 }}>
             <Compass size={15} color="var(--sage)" strokeWidth={1.8} />
           </div>
           <span className="tm-brand-name">TrailMate</span>
-        </div>
+        </button>
         <div className="tm-avatar">T</div>
       </div>
 
@@ -103,12 +103,13 @@ function Home() {
         activeId={currentTripId}
         onOpen={openTrip}
         onNew={newTrip}
+        onHome={newTrip}
         className={railOpen ? "tm-rail-open" : ""}
       />
 
       <div className="tm-main">
-        {/* Notebook only once there's a concrete plan; otherwise stay in the
-            conversation (chat) until one emerges; Welcome is the empty state. */}
+        {/* Notebook once there's a concrete plan; otherwise the chat (which shows a
+            live checklist while the agent works); Welcome is the empty state. */}
         {itinerary ? (
           <Notebook
             itinerary={itinerary}
@@ -120,7 +121,7 @@ function Home() {
             onSend={send}
           />
         ) : agent.messages.length > 0 ? (
-          <Chat messages={agent.messages} busy={agent.busy} onSend={send} />
+          <Chat messages={agent.messages} busy={agent.busy} steps={agent.steps} onSend={send} />
         ) : (
           <Welcome onSubmit={send} />
         )}
