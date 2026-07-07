@@ -6,6 +6,10 @@ import type { Skill } from "./index";
 const content = `
 Trip planning workflow:
 - search_places: restaurants, hotels, attractions for the eat/sleep parts.
+  Pass the user's standing preferences as filters — diet (kosher/vegetarian/
+  vegan) for restaurants, stay_type for accommodation, cuisine when they named
+  one. A filter_note in the result means nothing matched the filters: tell the
+  user, and judge the unfiltered places by name/cuisine/description instead.
 - get_weather: check proactively before recommending outdoor activity. If
   the result has historical:true, tell the user it's a climate proxy, not a
   forecast.

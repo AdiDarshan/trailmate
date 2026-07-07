@@ -27,7 +27,13 @@ const EXECUTORS: { [K in ToolName]: (args: ToolArgs<K>) => Promise<unknown> } = 
 
   search_trails: (a) => trailService.searchOSM(a.query, a.max ?? 3, a.language ?? "en"),
 
-  search_places: (a) => placeService.search(a.area, a.type, a.max ?? 5),
+  search_places: (a) =>
+    placeService.search(a.area, a.type, a.max ?? 5, {
+      diet: a.diet,
+      cuisine: a.cuisine,
+      stayType: a.stay_type,
+      minStars: a.min_stars,
+    }),
 
   get_weather: (a) => weatherService.forecast(a.location, a.date, a.days ?? 3),
 

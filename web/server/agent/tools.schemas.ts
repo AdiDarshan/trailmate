@@ -98,11 +98,30 @@ export const TOOL_SPECS = {
   search_places: {
     description:
       "Find real restaurants, hotels, or attractions in an Israeli area via " +
-      "OpenStreetMap. Returns names, addresses, and Google Maps links.",
+      "OpenStreetMap. Returns names, addresses, Google Maps links, and (when " +
+      "tagged) diet, cuisine, stars, and stay kind. Pass the user's preferences " +
+      "as filters instead of hoping the top results fit. If the result carries " +
+      "filter_note, the filters matched nothing — the list is unfiltered.",
     args: z.object({
       area: z.string().describe("Area or city in Israel, e.g. 'Tiberias'."),
       type: z.enum(["restaurant", "hotel", "attraction"]).describe("What to search for."),
       max: z.coerce.number().int().optional().describe("Max results (default 5)."),
+      diet: z
+        .enum(["kosher", "vegetarian", "vegan"])
+        .optional()
+        .describe("restaurant only: keep places tagged with this diet. Use the user's dietary preference."),
+      cuisine: z
+        .string()
+        .optional()
+        .describe("restaurant only: cuisine keyword, e.g. 'italian', 'fish', 'middle_eastern'."),
+      stay_type: z
+        .enum(["hotel", "guesthouse", "hostel", "apartment"])
+        .optional()
+        .describe("hotel only: the kind of accommodation. Use the user's Stay preference."),
+      min_stars: z.coerce
+        .number()
+        .optional()
+        .describe("hotel only: drop places rated below this many stars (unrated places are kept)."),
     }),
   },
 
