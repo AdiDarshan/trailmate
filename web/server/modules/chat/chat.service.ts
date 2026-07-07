@@ -13,6 +13,7 @@ import {
   collectTrailCandidates,
   ensureStartDate,
   filterSavedTrails,
+  findDuplicateTrails,
   findUncatalogedTrails,
   isConcreteItinerary,
   mergeEditedItinerary,
@@ -131,6 +132,18 @@ class ChatService {
       for (const u of savedTrails.urls) candidates.urls.add(u);
     }
 
+    // Search exclusion: saved trails PLUS whatever is already on the trip being
+    // edited — "add a day" must be offered something NEW, not day 1's trail again.
+    const searchExcludes: SavedTrailRefs = {
+      names: [...(savedTrails?.names ?? [])],
+      urls: [...(savedTrails?.urls ?? [])],
+    };
+    for (const d of currentTrip?.days ?? []) {
+      if (d?.trail?.name) searchExcludes.names.push(d.trail.name);
+      if (d?.trail?.tiuli_url) searchExcludes.urls.push(d.trail.tiuli_url);
+    }
+    const hasSearchExcludes = searchExcludes.names.length > 0 || searchExcludes.urls.length > 0;
+
     for (let iter = 1; iter <= MAX_ITERATIONS; iter++) {
       const compacted = await context.enforceCompaction(messages as ContextMessage[]);
       const stream = await log.timed("openai_chat", { model: MODEL, iter, msgs: compacted.length }, () =>
@@ -205,9 +218,10 @@ class ChatService {
           let result = await log.timed("tool_call", { tool: c.name, iter }, () =>
             executeTool(c.name, parsed),
           );
-          // Already-saved trails never reach the model as candidates.
-          if (savedTrails && (c.name === "search_tiuli" || c.name === "search_trails")) {
-            const { filtered, removed } = filterSavedTrails(result, savedTrails);
+          // Trails the user already has — saved trips or the trip on screen —
+          // never reach the model as search candidates.
+          if (hasSearchExcludes && (c.name === "search_tiuli" || c.name === "search_trails")) {
+            const { filtered, removed } = filterSavedTrails(result, searchExcludes);
             if (removed > 0) {
               log.info("saved_trails_filtered", { tool: c.name, iter, removed });
               result = filtered;
@@ -221,7 +235,19 @@ class ChatService {
           if (c.name === "present_itinerary" && result && typeof result === "object" && (result as any).itinerary) {
             const fresh = (result as any).itinerary as Itinerary;
             const unknown = findUncatalogedTrails(fresh, candidates);
-            if (unknown.length > 0) {
+            const dupes = findDuplicateTrails(fresh);
+            if (dupes.length > 0) {
+              // Same trail on two days — almost always a lazy "add a day" edit.
+              log.warn("duplicate_trails_rejected", { iter, trails: dupes });
+              result = {
+                status: "error",
+                message:
+                  `Rejected: these trails appear on more than one day: ${dupes.join(", ")}. ` +
+                  "Every day needs a DIFFERENT trail. Keep the existing days exactly as they are " +
+                  "and search_tiuli for a new trail for the added/changed day (trails already on " +
+                  "this trip are excluded from search results).",
+              };
+            } else if (unknown.length > 0) {
               // Hard gate: a trail the catalog never returned must not reach the
               // user. The error is the model's observation — it re-searches and retries.
               log.warn("uncataloged_trails_rejected", { iter, trails: unknown });
@@ -269,10 +295,12 @@ class ChatService {
         if (forced) forced = ensureStartDate(forced, addDaysISO(israelToday(), 1));
         if (forced) {
           // The forced call bypasses the loop's rejection path — apply the same
-          // catalog gate here; an invented trail falls through to the text fallback.
+          // catalog + no-duplicate gates here; a violation falls through to the
+          // text fallback.
           const unknown = findUncatalogedTrails(forced, candidates);
-          if (unknown.length > 0) {
-            log.warn("uncataloged_trails_rejected", { forced: true, trails: unknown });
+          const dupes = findDuplicateTrails(forced);
+          if (unknown.length > 0 || dupes.length > 0) {
+            log.warn("forced_itinerary_rejected", { uncataloged: unknown, duplicates: dupes });
             forced = null;
           }
         }

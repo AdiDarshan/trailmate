@@ -112,6 +112,24 @@ export function ensureStartDate(it: Itinerary, fallbackIso: string): Itinerary {
   return { ...it, start_date: fallbackIso };
 }
 
+/**
+ * Trail names that appear on MORE than one day of an itinerary (matched by
+ * tiuli_url when present, else normalized name). "Add a day" edits must add a
+ * NEW trail — the loop rejects presentations that repeat one.
+ */
+export function findDuplicateTrails(itinerary: Itinerary): string[] {
+  const seen = new Set<string>();
+  const dupes = new Set<string>();
+  for (const day of itinerary?.days ?? []) {
+    const t = day?.trail;
+    const key = t?.tiuli_url || t?.name?.trim().toLowerCase();
+    if (!key) continue;
+    if (seen.has(key)) dupes.add(t!.name?.trim() || key);
+    seen.add(key);
+  }
+  return [...dupes];
+}
+
 // ── Catalog-only itinerary gate ──────────────────────────────────────────────
 // Only trails the tiuli catalog actually returned (this turn, or already on the
 // trip being edited / in saved trips) may be presented. This is the hard stop
@@ -155,6 +173,13 @@ export function findUncatalogedTrails(itinerary: Itinerary, candidates: TrailCan
 
 // Friendly labels for the inline "working" checklist. Keyed so repeated calls
 // of the same kind (e.g. two trail searches for a 2-day trip) show as one row.
+/** The durable chat-message form of a finished planning turn's checklist.
+ *  Shared by the server (persists it) and the client (materializes it live)
+ *  so in-session and reloaded history render identically. */
+export function formatStepSummary(labels: string[]): string {
+  return ["Here's what I did:", ...labels.map((l) => `- ✓ ${l}`)].join("\n");
+}
+
 export const STEP_LABELS: Record<string, { key: string; label: string }> = {
   search_tiuli: { key: "trail", label: "Finding a trail" },
   search_trails: { key: "trail", label: "Finding a trail" },

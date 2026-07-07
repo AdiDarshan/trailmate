@@ -13,6 +13,10 @@ Editing an existing trip (a system message shows the trip the user is viewing):
   invent them.
 - A replacement or added trail must come from a fresh search_tiuli call in this
   conversation — never from memory, even if you are sure the trail exists.
+- EVERY DAY GETS A DIFFERENT TRAIL. When adding a day, never reuse a trail
+  that is already on the trip — search for a new one in the same area
+  (trails already on the trip are filtered out of search results, so pick
+  from what the search returns). Itineraries repeating a trail are rejected.
 - If the dates move: update start_date (YYYY-MM-DD), recompute each day's
   date, and re-check the weather for every day. Otherwise preserve start_date
   exactly as it is.

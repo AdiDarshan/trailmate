@@ -6,6 +6,8 @@ import {
   collectTrailCandidates,
   ensureStartDate,
   filterSavedTrails,
+  findDuplicateTrails,
+  formatStepSummary,
   findUncatalogedTrails,
   isConcreteItinerary,
   mergeEditedItinerary,
@@ -111,6 +113,14 @@ describe("STEP_LABELS", () => {
   });
 });
 
+describe("formatStepSummary", () => {
+  it("renders the checklist as a markdown message", () => {
+    expect(formatStepSummary(["Finding a trail", "Checking the weather"])).toBe(
+      "Here's what I did:\n- ✓ Finding a trail\n- ✓ Checking the weather",
+    );
+  });
+});
+
 describe("filterSavedTrails", () => {
   const refs = {
     names: ["Nahal Amud"],
@@ -197,5 +207,28 @@ describe("ensureStartDate", () => {
     expect(ensureStartDate(it_(), "2026-07-08").start_date).toBe("2026-07-08");
     expect(ensureStartDate(it_("July 8"), "2026-07-08").start_date).toBe("2026-07-08");
     expect(ensureStartDate(it_("2026-7-8"), "2026-07-08").start_date).toBe("2026-07-08");
+  });
+});
+
+describe("findDuplicateTrails", () => {
+  const trip = (...trails: Array<{ name?: string; tiuli_url?: string } | null>) =>
+    ({
+      title: "t",
+      days: trails.map((trail, i) => ({ day_number: i + 1, trail })),
+    }) as Itinerary;
+
+  it("flags a trail repeated across days (by url or normalized name)", () => {
+    const byUrl = trip(
+      { name: "Nahal Amud", tiuli_url: "u1" },
+      { name: "Renamed Amud", tiuli_url: "u1" }, // same trail, model renamed it
+    );
+    expect(findDuplicateTrails(byUrl)).toEqual(["Renamed Amud"]);
+    const byName = trip({ name: "Masada" }, { name: " masada " });
+    expect(findDuplicateTrails(byName)).toEqual(["masada"]);
+  });
+
+  it("accepts distinct trails and ignores rest days", () => {
+    expect(findDuplicateTrails(trip({ name: "A" }, null, { name: "B" }))).toEqual([]);
+    expect(findDuplicateTrails(trip())).toEqual([]);
   });
 });
