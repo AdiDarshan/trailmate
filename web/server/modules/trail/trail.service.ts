@@ -236,6 +236,19 @@ async function enrichOsm(trail: any): Promise<Record<string, any>> {
   return info;
 }
 
+// Rank candidates by how many words of the requested region appear in the trail's
+// pooled geography (region_he + subregion_he + area_he), field-agnostic — a trail
+// matching more region words ranks higher; semantic similarity breaks ties.
+function rerankByRegion(rows: TrailRow[], region: string): TrailRow[] {
+  const words = region.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
+  if (words.length === 0) return rows;
+  const score = (t: TrailRow) => {
+    const blob = `${t.region_he ?? ""} ${t.subregion_he ?? ""} ${t.area_he ?? ""}`.toLowerCase();
+    return words.filter((w) => blob.includes(w)).length;
+  };
+  return [...rows].sort((a, b) => score(b) - score(a) || (b.similarity ?? 0) - (a.similarity ?? 0));
+}
+
 function toTrail(t: TrailRow) {
   return {
     name: t.name_he,
@@ -283,7 +296,12 @@ class TrailService {
 
     const embedding = await embedQuery(query);
     if (embedding) {
-      const rows = await trailDbService.matchSemantic(embedding, filters, limit);
+      // With a region set, over-fetch candidates and re-rank so a trail matching MORE
+      // of the region words wins (e.g. "נגב מערבי" beats a plain "נגב" trail), with
+      // semantic similarity as the tie-break. Word match is field-agnostic.
+      const want = filters.region ? Math.min(20, Math.max(limit, limit * 4)) : limit;
+      const raw = await trailDbService.matchSemantic(embedding, filters, want);
+      const rows = filters.region ? rerankByRegion(raw, filters.region).slice(0, limit) : raw;
       if (rows.length > 0) return { trails: rows.map(toTrail), matched_by: "semantic" };
       if (hasFilters) {
         // Filters may have excluded everything (e.g. no ≤5 km trail in that region).

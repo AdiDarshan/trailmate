@@ -46,12 +46,12 @@ export const TOOLS: Record<string, ToolDef> = {
       function: {
         name: "search_tiuli",
         description:
-          "Search TrailMate's curated catalog of 348 real Israeli hiking trails " +
-          "(from tiuli.com). PRIMARY trail source. Ranks by semantic similarity to " +
-          "`query`, then narrows with optional hard filters. Put the free-form intent " +
-          "(scenery, vibe, 'waterfall hike with shade') in `query`; put measurable " +
-          "constraints in the filter params. `query` is matched semantically in both " +
-          "Hebrew and English, but Hebrew place names still help (e.g. 'גליל', 'עין גדי'). " +
+          "Search TrailMate's curated catalog of ~800 real Israeli hiking trails " +
+          "(from tiuli.com and nakeb.co.il). PRIMARY trail source. Ranks by semantic " +
+          "similarity to `query`, then narrows with optional hard filters. Put the " +
+          "free-form intent (scenery, vibe, 'waterfall hike with shade') in `query`; put " +
+          "measurable constraints in the filter params. `query` is matched semantically " +
+          "in both Hebrew and English, but Hebrew place names still help (e.g. 'גליל'). " +
           "Each result includes region, difficulty_level (1-5), distance_km, and features. " +
           "If filters return nothing, relax them or use search_trails.",
         parameters: {
@@ -66,9 +66,10 @@ export const TOOLS: Record<string, ToolDef> = {
             region: {
               type: "string",
               description:
-                "Restrict to an area/region. Pass the place the user named, in English " +
-                "OR Hebrew — 'Golan', 'North', 'Western Galilee', 'Negev', 'גליל', 'הגולן'. " +
-                "The server resolves it to the catalog's geography. Omit to search everywhere.",
+                "Restrict to an area/region. Pass the MOST SPECIFIC place the user named " +
+                "(e.g. 'Western Negev'/'נגב מערבי', not just 'Negev') — results are ranked " +
+                "by how many of these words match, so specificity wins. English OR Hebrew " +
+                "('Golan', 'North', 'גליל', 'הגולן'); the server resolves it. Omit to search everywhere.",
             },
             max_km: { type: "number", description: "Max trail length in km (e.g. 6 for a short hike)." },
             min_km: { type: "number", description: "Min trail length in km." },
@@ -86,7 +87,10 @@ export const TOOLS: Record<string, ToolDef> = {
                   "bloom", "beach", "picnic",
                 ],
               },
-              description: "Required features — a trail must have ALL of them.",
+              description:
+                "Required features — a trail must have ALL of them (hard filter). Use for " +
+                "firm must-haves; ALSO mention the feature in `query` so a matching-but-" +
+                "untagged trail can still surface semantically.",
             },
             limit: { type: "integer", description: "Max trails to return (default 5, cap 20)." },
           },

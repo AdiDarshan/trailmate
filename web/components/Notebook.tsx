@@ -6,10 +6,19 @@ import remarkGfm from "remark-gfm";
 import {
   Footprints, Utensils, BedDouble, CloudSun, WandSparkles, Clock, Gauge,
   ExternalLink, TriangleAlert, Calendar, Share2, ArrowUp, Sparkles, Compass,
-  MessageSquare, ChevronDown,
+  MessageSquare, ChevronDown, Mountain,
 } from "lucide-react";
 import IsraelMap from "./IsraelMap";
 import type { Day, Itinerary, Place, Trail } from "@/server/shared/types";
+
+// The trailhead coords are embedded in the Maps/Waze links (q=lat,lng / ll=lat,lng).
+// Pull them back out to build an Israel Hiking Map link so the user can see the
+// chosen area on a topographic hiking map. (Amud Anan has no coordinate deep-link.)
+function hikingMapUrl(trail?: Trail | null): string | undefined {
+  const src = trail?.start_maps || trail?.waze || "";
+  const m = src.match(/(?:[?&]q=|ll=)(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  return m ? `https://israelhiking.osm.org.il/map/14/${m[1]}/${m[2]}` : undefined;
+}
 
 type Section = "hike" | "eat" | "sleep";
 
@@ -37,6 +46,14 @@ const REFINE: Record<Section, { title: string; tag: string; placeholder: string;
 function Link({ text, url }: { text: string; url?: string }) {
   if (!url) return <>{text}</>;
   return <a href={url} target="_blank" rel="noreferrer">{text}</a>;
+}
+
+// The trail-guide link comes from either catalog; label it by its source domain.
+function guideLabel(url?: string): string {
+  if (!url) return "Trail guide";
+  if (url.includes("nakeb.co.il")) return "Nakeb guide";
+  if (url.includes("tiuli.com")) return "Tiuli guide";
+  return "Trail guide";
 }
 
 function RefinePopover({
@@ -112,9 +129,14 @@ function TrailCard({ trail, onRefine }: { trail?: Trail | null; onRefine: () => 
             {trail.distance_km && <span className="tm-pill"><Footprints size={12} strokeWidth={1.8} />{trail.distance_km} km</span>}
             {trail.start_maps && <span className="tm-pill"><Link text="Maps" url={trail.start_maps} /></span>}
             {trail.waze && <span className="tm-pill"><Link text="Waze" url={trail.waze} /></span>}
+            {hikingMapUrl(trail) && (
+              <a href={hikingMapUrl(trail)} target="_blank" rel="noreferrer" className="tm-pill">
+                <Mountain size={12} strokeWidth={1.8} />Topo map
+              </a>
+            )}
             {trail.tiuli_url && (
               <a href={trail.tiuli_url} target="_blank" rel="noreferrer" className="tm-pill tm-pill-dark">
-                <ExternalLink size={12} strokeWidth={1.8} />Tiuli guide
+                <ExternalLink size={12} strokeWidth={1.8} />{guideLabel(trail.tiuli_url)}
               </a>
             )}
           </div>
