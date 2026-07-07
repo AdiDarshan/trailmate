@@ -13,6 +13,14 @@ export class AppError extends Error {
   }
 }
 
+/** A requested resource doesn't exist or isn't visible to this user — controllers map it to 404. */
+export class NotFoundError extends AppError {
+  constructor(message: string, opts?: { publicMessage?: string; cause?: unknown }) {
+    super(message, opts);
+    this.name = "NotFoundError";
+  }
+}
+
 export const GENERIC_USER_ERROR = "Something went wrong. Please try again.";
 
 /** The message safe to show a user for any thrown value. */

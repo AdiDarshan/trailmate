@@ -8,12 +8,25 @@ import { createLogger, errInfo } from "../../shared/logger";
 
 const log = createLogger("reminder.cron");
 
+/**
+ * No secret configured: allow in dev (local convenience), DENY in production —
+ * a dropped env var must not silently make the endpoint public.
+ */
+export function isAuthorizedCron(
+  authHeader: string | null,
+  secret: string | undefined,
+  isProduction: boolean,
+): boolean {
+  if (!secret) return !isProduction;
+  return authHeader === `Bearer ${secret}`;
+}
+
 class CronController {
   private authorized(req: Request): boolean {
     const secret = process.env.CRON_SECRET;
-    if (!secret) return true; // no secret configured (e.g. local dev) → allow
-    const auth = req.headers.get("authorization");
-    return auth === `Bearer ${secret}`;
+    const isProduction = process.env.NODE_ENV === "production";
+    if (!secret && isProduction) log.error("cron_secret_missing", {});
+    return isAuthorizedCron(req.headers.get("authorization"), secret, isProduction);
   }
 
   async daily(req: Request): Promise<Response> {
