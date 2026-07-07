@@ -4,7 +4,7 @@
 // so the map orients the user to the country/region rather than plotting exact
 // waypoints.
 
-const OUTLINE =
+export const ISRAEL_OUTLINE =
   "M347 44 L354 46 L352 67 L354 74 L364 87 L358 106 L365 113 L365 122 L355 147 L335 168 L327 171 L327 207 L333 248 L330 260 L333 303 L323 317 L318 349 L324 380 L319 394 L324 409 L321 425 L326 431 L320 441 L320 450 L304 493 L305 560 L297 590 L291 646 L282 660 L275 663 L268 650 L268 638 L263 619 L249 593 L247 580 L228 537 L214 522 L215 515 L207 491 L172 410 L170 400 L181 389 L184 370 L202 350 L195 340 L211 309 L218 288 L239 185 L239 148 L242 144 L248 145 L252 140 L255 104 L276 99 L284 99 L290 104 L303 100 L309 91 L310 68 L316 66 L322 70 L331 59 L342 53 L347 44 Z";
 
 export interface MapPin {
@@ -68,7 +68,7 @@ export default function IsraelMap({
       )}
       <svg viewBox="160 34 215 639" aria-hidden="true">
         <path
-          d={OUTLINE}
+          d={ISRAEL_OUTLINE}
           fill="none"
           stroke="#3d5a40"
           strokeWidth={strokeWidth}
