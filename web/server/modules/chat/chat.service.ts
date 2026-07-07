@@ -3,12 +3,17 @@
 // AgentEvent objects; the controller serialises them as NDJSON.
 
 import OpenAI from "openai";
+import { ContextManager, type ContextMessage } from "../../agent/context";
 import { buildSystemPrompt } from "../../agent/prompt";
 import { TOOL_SCHEMAS, executeTool } from "../../agent/tools";
 import type { ChatMessage, Day, Itinerary, Place, Trail } from "../../shared/types";
 
 const MODEL = "gpt-4o";
+const SUMMARY_MODEL = "gpt-4o-mini";
 const MAX_ITERATIONS = 10;
+// Well under gpt-4o's 128k — keeps latency inside the serverless budget and
+// stops old tool payloads (fat search results) from riding along forever.
+const MAX_CONTEXT_TOKENS = 32_000;
 
 // A plan is "concrete" — and worth switching the UI to the notebook — only when it
 // has at least one day with an actual trail. Conversational answers, clarifying
@@ -80,6 +85,19 @@ type ChatParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 class ChatService {
   async *run(history: ChatMessage[], currentTrip: Itinerary | null = null): AsyncGenerator<AgentEvent> {
     const client = new OpenAI();
+    // Stateless per request: the client posts full history, we compact a
+    // *view* of it before every model call. Summarization (tier 3) is rare
+    // and cheap, so it runs on the small model.
+    const context = new ContextManager({
+      maxContextTokens: MAX_CONTEXT_TOKENS,
+      summarizeFn: async (prompt) => {
+        const res = await client.chat.completions.create({
+          model: SUMMARY_MODEL,
+          messages: [{ role: "user", content: prompt }],
+        });
+        return res.choices[0]?.message?.content?.trim() ?? "";
+      },
+    });
     const messages: ChatParam[] = [
       { role: "system", content: buildSystemPrompt() },
     ];
@@ -102,17 +120,20 @@ class ChatService {
     const emittedSteps = new Set<string>();
 
     for (let iter = 1; iter <= MAX_ITERATIONS; iter++) {
+      const compacted = await context.enforceCompaction(messages as ContextMessage[]);
       const stream = await client.chat.completions.create({
         model: MODEL,
-        messages,
+        messages: compacted as ChatParam[],
         tools: TOOL_SCHEMAS,
         stream: true,
+        stream_options: { include_usage: true },
       });
 
       let content = "";
       const toolCalls: Record<number, { id: string; name: string; args: string }> = {};
 
       for await (const chunk of stream) {
+        if (chunk.usage) context.trackBurn(chunk.usage);
         const choice = chunk.choices[0];
         if (!choice) continue;
         const delta = choice.delta;
@@ -190,7 +211,8 @@ class ChatService {
         // itinerary — it wrote the plan as prose (which we suppressed). Convert that
         // into a real present_itinerary so the notebook opens instead of nothing.
         messages.push({ role: "assistant", content });
-        let forced = await this.forcePresent(client, messages);
+        const forceView = (await context.enforceCompaction(messages as ContextMessage[])) as ChatParam[];
+        let forced = await this.forcePresent(client, forceView);
         if (forced && currentTrip) forced = mergeEditedItinerary(currentTrip, forced);
         if (isConcreteItinerary(forced)) {
           yield { type: "itinerary", data: forced as Itinerary };
