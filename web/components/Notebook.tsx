@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -234,6 +234,14 @@ export default function Notebook({
   // Close the refine popover once the agent finishes applying the change.
   useEffect(() => { if (!busy) setRefining(null); }, [busy]);
 
+  // Keep the conversation log pinned to the latest message — on open and as
+  // replies stream in. Scrolls the log box itself, never the page.
+  const logRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, busy, chatOpen]);
+
   const days: Day[] = itinerary.days ?? [];
   const day = days[active];
   const eyebrow = days.length <= 1 ? "One-day trip" : `${days.length}-day trip`;
@@ -335,7 +343,7 @@ export default function Notebook({
           </button>
         )}
         {chatOpen && messages.length > 0 && (
-          <div className="tm-global-log">
+          <div className="tm-global-log" ref={logRef}>
             {messages.map((m, i) => (
               <div key={i} className={`tm-msg ${m.role === "user" ? "tm-msg-user" : ""}`}>
                 {m.role === "assistant" && (
