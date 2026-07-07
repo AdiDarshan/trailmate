@@ -85,7 +85,9 @@ export const TOOL_SPECS = {
     description:
       "Secondary geographic trail search via the Israel Hiking Map / OpenStreetMap. " +
       "Use when the tiuli catalog has no good match for an area, or to get computed " +
-      "distance, elevation, and difficulty for a named OSM trail.",
+      "distance, elevation, and difficulty for a named OSM trail. Results are " +
+      "geographic CONTEXT only — they may not be presented as itinerary trails; " +
+      "only search_tiuli results may.",
     args: z.object({
       query: z.string().describe("Trail or area name, e.g. 'Yehudiya', 'Arbel'."),
       max: z.coerce.number().int().optional().describe("Max trails (default 3, cap 5)."),

@@ -3,8 +3,12 @@ import {
   STEP_LABELS,
   backfillPlace,
   backfillTrail,
+  collectTrailCandidates,
+  filterSavedTrails,
+  findUncatalogedTrails,
   isConcreteItinerary,
   mergeEditedItinerary,
+  newTrailCandidates,
 } from "./chat.helpers";
 import type { Itinerary } from "../../shared/types";
 
@@ -103,5 +107,79 @@ describe("mergeEditedItinerary", () => {
 describe("STEP_LABELS", () => {
   it("maps both trail-search tools onto one checklist key", () => {
     expect(STEP_LABELS.search_tiuli.key).toBe(STEP_LABELS.search_trails.key);
+  });
+});
+
+describe("filterSavedTrails", () => {
+  const refs = {
+    names: ["Nahal Amud"],
+    urls: ["https://tiuli.com/track/123"],
+  };
+  const byUrl = { name: "שביל אחר", tiuli_url: "https://tiuli.com/track/123" };
+  const byName = { name: "  nahal amud " }; // OSM result: no tiuli_url
+  const fresh = { name: "Nahal Yehudia", tiuli_url: "https://tiuli.com/track/999" };
+
+  it("removes trails matching by tiuli_url or (case/space-insensitive) name", () => {
+    const { filtered, removed } = filterSavedTrails({ trails: [byUrl, byName, fresh] }, refs);
+    expect(removed).toBe(2);
+    expect((filtered as any).trails).toEqual([fresh]);
+    // The model must see WHAT was removed (to offer alternatives), not just a count.
+    expect((filtered as any).excluded_saved.count).toBe(2);
+    expect((filtered as any).excluded_saved.trails).toEqual([byUrl.name, "  nahal amud "]);
+    expect((filtered as any).excluded_saved.note).toMatch(/search again/i);
+  });
+
+  it("returns the result untouched when nothing matches", () => {
+    const result = { trails: [fresh], matched_by: "semantic" };
+    const out = filterSavedTrails(result, refs);
+    expect(out.removed).toBe(0);
+    expect(out.filtered).toBe(result); // same reference — no needless copy
+  });
+
+  it("passes non-search-shaped results through (errors, weather, …)", () => {
+    const err = { status: "error", message: "boom" };
+    expect(filterSavedTrails(err, refs).filtered).toBe(err);
+    expect(filterSavedTrails(null, refs).removed).toBe(0);
+  });
+});
+
+describe("catalog-only itinerary gate", () => {
+  const candidates = newTrailCandidates();
+  collectTrailCandidates(
+    [
+      { name: "נחל עמוד", tiuli_url: "https://tiuli.com/track/123" },
+      { name: "Mount Arbel" }, // candidate without url (edited-trip seed)
+      null,
+    ],
+    candidates,
+  );
+
+  const itinerary = (...trails: Array<{ name?: string; tiuli_url?: string } | null>) =>
+    ({
+      title: "t",
+      days: trails.map((trail, i) => ({ day_number: i + 1, trail })),
+    }) as Itinerary;
+
+  it("accepts trails matching by url even when the model translated the name", () => {
+    const it_ = itinerary({ name: "Nahal Amud (translated)", tiuli_url: "https://tiuli.com/track/123" });
+    expect(findUncatalogedTrails(it_, candidates)).toEqual([]);
+  });
+
+  it("accepts trails matching by normalized name without a url", () => {
+    const it_ = itinerary({ name: "  mount arbel " });
+    expect(findUncatalogedTrails(it_, candidates)).toEqual([]);
+  });
+
+  it("rejects invented trails and ignores trail-free rest days", () => {
+    const it_ = itinerary({ name: "Metula Scenic Trail" }, null, { name: "נחל עמוד" });
+    expect(findUncatalogedTrails(it_, candidates)).toEqual(["Metula Scenic Trail"]);
+  });
+
+  it("collects nothing from non-array input", () => {
+    const empty = newTrailCandidates();
+    collectTrailCandidates(undefined, empty);
+    collectTrailCandidates({ not: "an array" }, empty);
+    expect(empty.names.size).toBe(0);
+    expect(empty.urls.size).toBe(0);
   });
 });

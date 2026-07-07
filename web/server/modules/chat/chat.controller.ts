@@ -9,10 +9,11 @@
 import { chatService } from "./chat.service";
 import { chatDbService, type ChatSession } from "./chat.dbservice";
 import { tripService } from "../trip/trip.service";
+import { prefsDbService } from "../prefs/prefs.dbservice";
 import { getAuthUser } from "../../db/supabase-auth";
 import { NotFoundError, toPublicMessage } from "../../shared/errors";
 import { bindRequestContext, createLogger, errInfo } from "../../shared/logger";
-import type { ChatMessage, Itinerary } from "../../shared/types";
+import type { ChatMessage, Itinerary, SavedTrailRefs } from "../../shared/types";
 
 const log = createLogger("chat.controller");
 
@@ -72,6 +73,19 @@ class ChatController {
       return Response.json({ error: toPublicMessage(e) }, { status: 500 });
     }
 
+    // Personalization is best-effort: if either read fails, the chat proceeds
+    // without that piece rather than erroring the whole turn.
+    let savedTrails: SavedTrailRefs | null = null;
+    let preferences: string | null = null;
+    const [trailsRes, prefsRes] = await Promise.allSettled([
+      tripService.savedTrailRefs(user.id),
+      prefsDbService.get(user.id),
+    ]);
+    if (trailsRes.status === "fulfilled") savedTrails = trailsRes.value;
+    else log.warn("saved_trails_load_failed", { userId: user.id, ...errInfo(trailsRes.reason) });
+    if (prefsRes.status === "fulfilled") preferences = prefsRes.value;
+    else log.warn("prefs_load_failed", { userId: user.id, ...errInfo(prefsRes.reason) });
+
     const activeSession = session;
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
@@ -82,7 +96,7 @@ class ChatController {
         controller.enqueue(encoder.encode(JSON.stringify({ type: "session", id: activeSession.id }) + "\n"));
         let assistantText = "";
         try {
-          for await (const event of chatService.run(history, currentTrip)) {
+          for await (const event of chatService.run(history, currentTrip, savedTrails, preferences)) {
             if (event.type === "text") assistantText += event.v;
             if (event.type === "itinerary") {
               await chatDbService.setItinerary(activeSession.id, event.data);

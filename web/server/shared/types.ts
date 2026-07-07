@@ -37,6 +37,14 @@ export interface Itinerary {
   days: Day[];
 }
 
+// Trails the user has already saved (across all their trips) — used to keep
+// the agent from recommending them again. `names` are display names as saved;
+// `urls` are tiuli URLs (the closest thing itineraries have to a stable id).
+export interface SavedTrailRefs {
+  names: string[];
+  urls: string[];
+}
+
 // One row in the saved-trips sidebar.
 export interface TripSummary {
   id: string;

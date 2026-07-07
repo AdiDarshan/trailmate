@@ -7,11 +7,15 @@ import { ContextManager, type ContextMessage } from "../../agent/context";
 import { buildSystemPrompt } from "../../agent/prompt";
 import { TOOL_SCHEMAS, executeTool } from "../../agent/tools";
 import { createLogger, errInfo } from "../../shared/logger";
-import type { ChatMessage, Itinerary } from "../../shared/types";
+import type { ChatMessage, Itinerary, SavedTrailRefs } from "../../shared/types";
 import {
   STEP_LABELS,
+  collectTrailCandidates,
+  filterSavedTrails,
+  findUncatalogedTrails,
   isConcreteItinerary,
   mergeEditedItinerary,
+  newTrailCandidates,
 } from "./chat.helpers";
 
 const MODEL = "gpt-4o";
@@ -32,10 +36,23 @@ export type AgentEvent =
 
 type ChatParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
+// Prompt-note cap: a power user's saved-trail list must not crowd the context.
+// The hard filter below still applies to ALL saved trails regardless.
+const MAX_PROMPT_TRAIL_NAMES = 50;
+
 class ChatService {
-  async *run(history: ChatMessage[], currentTrip: Itinerary | null = null): AsyncGenerator<AgentEvent> {
+  async *run(
+    history: ChatMessage[],
+    currentTrip: Itinerary | null = null,
+    savedTrails: SavedTrailRefs | null = null,
+    preferences: string | null = null,
+  ): AsyncGenerator<AgentEvent> {
     const turnStart = Date.now();
-    log.info("turn_start", { historyLen: history.length, hasTrip: !!currentTrip });
+    log.info("turn_start", {
+      historyLen: history.length,
+      hasTrip: !!currentTrip,
+      savedTrailCount: savedTrails?.names.length ?? 0,
+    });
 
     const client = new OpenAI();
     // Stateless per request: the client posts full history, we compact a
@@ -56,6 +73,18 @@ class ChatService {
     const messages: ChatParam[] = [
       { role: "system", content: buildSystemPrompt() },
     ];
+    // Standing preferences the user set in the app — apply to every choice,
+    // not just when the user repeats them in chat.
+    if (preferences?.trim()) {
+      messages.push({
+        role: "system",
+        content:
+          "STANDING USER PREFERENCES (set once in the app — apply them to every " +
+          "trail, food, and hotel search and choice in this conversation; the user " +
+          "should not have to repeat them):\n" +
+          preferences.trim(),
+      });
+    }
     // Edit context: if a saved trip is open, tell the agent so requested changes
     // modify THIS trip (and it re-presents the full updated itinerary).
     if (currentTrip) {
@@ -68,11 +97,37 @@ class ChatService {
           JSON.stringify(currentTrip),
       });
     }
+    // Personalization: name the trails the user already saved so the model
+    // understands WHY they're absent from search results (they're hard-filtered
+    // below) and can still discuss one when the user explicitly asks for it.
+    if (savedTrails && savedTrails.names.length > 0) {
+      const shown = savedTrails.names.slice(0, MAX_PROMPT_TRAIL_NAMES);
+      const more = savedTrails.names.length - shown.length;
+      messages.push({
+        role: "system",
+        content:
+          "The user has already saved trips that include these trails: " +
+          shown.join(", ") +
+          (more > 0 ? ` (and ${more} more)` : "") +
+          ". They are excluded from trail search results — do not recommend them " +
+          "again unless the user explicitly asks to repeat a specific trail.",
+      });
+    }
     messages.push(...history.map((m) => ({ role: m.role, content: m.content }) as ChatParam));
 
     let presented: Itinerary | null = null;
     let usedTrailSearch = false; // once true, the agent is building — suppress chat prose
     const emittedSteps = new Set<string>();
+
+    // Catalog-only gate: presentable trails are ones search_tiuli returns this
+    // turn, plus the trip being edited and saved trails (the user may explicitly
+    // ask to repeat one). Everything else is rejected in the loop below.
+    const candidates = newTrailCandidates();
+    if (currentTrip) collectTrailCandidates(currentTrip.days?.map((d) => d.trail), candidates);
+    if (savedTrails) {
+      for (const n of savedTrails.names) candidates.names.add(n.trim().toLowerCase());
+      for (const u of savedTrails.urls) candidates.urls.add(u);
+    }
 
     for (let iter = 1; iter <= MAX_ITERATIONS; iter++) {
       const compacted = await context.enforceCompaction(messages as ContextMessage[]);
@@ -145,14 +200,42 @@ class ChatService {
           }
           // executeTool never throws — failures come back as {status:"error"}
           // observations for the model. timed() here records tool latency.
-          const result = await log.timed("tool_call", { tool: c.name, iter }, () =>
+          let result = await log.timed("tool_call", { tool: c.name, iter }, () =>
             executeTool(c.name, parsed),
           );
+          // Already-saved trails never reach the model as candidates.
+          if (savedTrails && (c.name === "search_tiuli" || c.name === "search_trails")) {
+            const { filtered, removed } = filterSavedTrails(result, savedTrails);
+            if (removed > 0) {
+              log.info("saved_trails_filtered", { tool: c.name, iter, removed });
+              result = filtered;
+            }
+          }
+          // Catalog results become the presentable set. search_trails (OSM) is
+          // deliberately NOT collected — its results are geographic context only.
+          if (c.name === "search_tiuli") {
+            collectTrailCandidates((result as { trails?: unknown[] } | null)?.trails, candidates);
+          }
           if (c.name === "present_itinerary" && result && typeof result === "object" && (result as any).itinerary) {
             const fresh = (result as any).itinerary as Itinerary;
-            // Editing an existing trip → restore links the model dropped for
-            // unchanged trails/places. Fresh trips (no currentTrip) pass through.
-            presented = currentTrip ? mergeEditedItinerary(currentTrip, fresh) : fresh;
+            const unknown = findUncatalogedTrails(fresh, candidates);
+            if (unknown.length > 0) {
+              // Hard gate: a trail the catalog never returned must not reach the
+              // user. The error is the model's observation — it re-searches and retries.
+              log.warn("uncataloged_trails_rejected", { iter, trails: unknown });
+              result = {
+                status: "error",
+                message:
+                  `Rejected: these trails did not come from this conversation's search_tiuli results: ${unknown.join(", ")}. ` +
+                  "Every itinerary trail must be copied exactly (name and tiuli_url) from a search_tiuli result — " +
+                  "never from memory and never from search_trails. Search the catalog, then call " +
+                  "present_itinerary again using only returned trails.",
+              };
+            } else {
+              // Editing an existing trip → restore links the model dropped for
+              // unchanged trails/places. Fresh trips (no currentTrip) pass through.
+              presented = currentTrip ? mergeEditedItinerary(currentTrip, fresh) : fresh;
+            }
           }
           messages.push({ role: "tool", tool_call_id: c.id, content: JSON.stringify(result) });
         }
@@ -180,6 +263,15 @@ class ChatService {
         const forceView = (await context.enforceCompaction(messages as ContextMessage[])) as ChatParam[];
         let forced = await this.forcePresent(client, forceView);
         if (forced && currentTrip) forced = mergeEditedItinerary(currentTrip, forced);
+        if (forced) {
+          // The forced call bypasses the loop's rejection path — apply the same
+          // catalog gate here; an invented trail falls through to the text fallback.
+          const unknown = findUncatalogedTrails(forced, candidates);
+          if (unknown.length > 0) {
+            log.warn("uncataloged_trails_rejected", { forced: true, trails: unknown });
+            forced = null;
+          }
+        }
         if (isConcreteItinerary(forced)) {
           yield { type: "itinerary", data: forced as Itinerary };
         } else if (content.trim()) {

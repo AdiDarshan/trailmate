@@ -67,6 +67,18 @@ class TripDbService {
     });
   }
 
+  /** Every itinerary the signed-in user has saved — for personalization. */
+  async listItinerariesByUser(userId: string): Promise<Itinerary[]> {
+    return log.timed("list_trip_data", { userId }, async () => {
+      const db = await createAuthClient();
+      const rows = unwrap(
+        "list_trip_data",
+        await db.from("trips").select("data").eq("user_id", userId),
+      );
+      return (rows ?? []).map((r) => r.data as Itinerary);
+    });
+  }
+
   /** Load a trip the signed-in user owns (RLS returns nothing otherwise). */
   async getByIdForUser(id: string, userId: string): Promise<Itinerary | null> {
     return log.timed("get_trip", { tripId: id, userId }, async () => {

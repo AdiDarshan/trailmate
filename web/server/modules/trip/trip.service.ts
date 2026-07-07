@@ -6,7 +6,7 @@ import { tripDbService } from "./trip.dbservice";
 import { telegramDbService } from "../telegram/telegram.dbservice";
 import { telegramService } from "../telegram/telegram.service";
 import { createLogger, errInfo } from "../../shared/logger";
-import type { Itinerary, TripSummary } from "../../shared/types";
+import type { Itinerary, SavedTrailRefs, TripSummary } from "../../shared/types";
 
 const TRIP_ID_LENGTH = 10;
 const START_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -62,6 +62,31 @@ class TripService {
   async list(userId: string): Promise<TripSummary[]> {
     return tripDbService.listByUser(userId);
   }
+
+  /** Trails across all the user's saved trips — the agent's "don't recommend again" list. */
+  async savedTrailRefs(userId: string): Promise<SavedTrailRefs> {
+    return extractSavedTrailRefs(await tripDbService.listItinerariesByUser(userId));
+  }
+}
+
+/**
+ * Collect unique trail names and tiuli URLs from saved itineraries. Names are
+ * deduped case/whitespace-insensitively but returned as saved (they surface in
+ * the system prompt); URLs are the stable match key where present.
+ */
+export function extractSavedTrailRefs(itineraries: Itinerary[]): SavedTrailRefs {
+  const names = new Map<string, string>();
+  const urls = new Set<string>();
+  for (const it of itineraries) {
+    for (const day of it?.days ?? []) {
+      const trail = day?.trail;
+      if (!trail) continue;
+      const name = trail.name?.trim();
+      if (name && !names.has(name.toLowerCase())) names.set(name.toLowerCase(), name);
+      if (trail.tiuli_url) urls.add(trail.tiuli_url);
+    }
+  }
+  return { names: [...names.values()], urls: [...urls] };
 }
 
 export const tripService = new TripService();

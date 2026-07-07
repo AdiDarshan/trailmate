@@ -3,7 +3,7 @@
 // fields (tiuli_url, waze, maps) when re-presenting an unchanged item; if the
 // item's identifying name is unchanged we restore what the new version lost.
 
-import type { Day, Itinerary, Place, Trail } from "../../shared/types";
+import type { Day, Itinerary, Place, SavedTrailRefs, Trail } from "../../shared/types";
 
 // A plan is "concrete" — and worth switching the UI to the notebook — only when
 // it has at least one day with an actual trail. Conversational answers,
@@ -56,6 +56,88 @@ export function mergeEditedItinerary(oldIt: Itinerary, newIt: Itinerary): Itiner
     };
   });
   return { ...newIt, days };
+}
+
+/**
+ * Drop already-saved trails from a trail-search tool result ({trails: [...]}).
+ * Matches by tiuli_url where present, else by case/whitespace-insensitive name
+ * (OSM results have no tiuli_url). When anything was removed, the returned
+ * result carries `excluded_saved` naming the removed trails and telling the
+ * model to search again if too few options remain — filtered results must read
+ * as "already done", never as "nothing exists". Non-search-shaped results pass
+ * through untouched.
+ */
+export function filterSavedTrails(
+  result: unknown,
+  refs: SavedTrailRefs,
+): { filtered: unknown; removed: number } {
+  const r = result as { trails?: Array<{ name?: string; tiuli_url?: string }> } | null;
+  if (!r || !Array.isArray(r.trails)) return { filtered: result, removed: 0 };
+  const urls = new Set(refs.urls);
+  const names = new Set(refs.names.map((n) => n.trim().toLowerCase()));
+  const isSaved = (t: { name?: string; tiuli_url?: string }) =>
+    (!!t?.tiuli_url && urls.has(t.tiuli_url)) ||
+    (!!t?.name && names.has(t.name.trim().toLowerCase()));
+  const kept = r.trails.filter((t) => !isSaved(t));
+  const removed = r.trails.length - kept.length;
+  if (removed === 0) return { filtered: result, removed: 0 };
+  const removedNames = r.trails.filter(isSaved).map((t) => t?.name ?? "(unnamed)");
+  return {
+    filtered: {
+      ...r,
+      trails: kept,
+      excluded_saved: {
+        count: removed,
+        trails: removedNames,
+        note:
+          "These matching trails were removed because the user already has them in saved trips. " +
+          "Do not recommend them. If too few options remain, search again with different criteria " +
+          "(other region, distance, or query) to offer alternatives.",
+      },
+    },
+    removed,
+  };
+}
+
+// ── Catalog-only itinerary gate ──────────────────────────────────────────────
+// Only trails the tiuli catalog actually returned (this turn, or already on the
+// trip being edited / in saved trips) may be presented. This is the hard stop
+// for hallucinated trails the model "remembers" from training data.
+
+export interface TrailCandidates {
+  names: Set<string>; // normalized (trim/lowercase)
+  urls: Set<string>;
+}
+
+export function newTrailCandidates(): TrailCandidates {
+  return { names: new Set(), urls: new Set() };
+}
+
+/** Record an array of trails (search result or itinerary days) as presentable. */
+export function collectTrailCandidates(trails: unknown, into: TrailCandidates): void {
+  if (!Array.isArray(trails)) return;
+  for (const t of trails as Array<{ name?: string; tiuli_url?: string } | null | undefined>) {
+    if (t?.name?.trim()) into.names.add(t.name.trim().toLowerCase());
+    if (t?.tiuli_url) into.urls.add(t.tiuli_url);
+  }
+}
+
+/**
+ * Trails in a presented itinerary that never came from the catalog. A trail is
+ * legitimate if EITHER its tiuli_url or its normalized name matches a candidate
+ * (url is the stable key — it survives the model translating a Hebrew name).
+ * Trail-free days (rest days) are ignored.
+ */
+export function findUncatalogedTrails(itinerary: Itinerary, candidates: TrailCandidates): string[] {
+  const unknown: string[] = [];
+  for (const day of itinerary?.days ?? []) {
+    const t = day?.trail;
+    if (!t || (!t.name && !t.tiuli_url)) continue;
+    const nameOk = !!t.name && candidates.names.has(t.name.trim().toLowerCase());
+    const urlOk = !!t.tiuli_url && candidates.urls.has(t.tiuli_url);
+    if (!nameOk && !urlOk) unknown.push(t.name?.trim() || t.tiuli_url!);
+  }
+  return unknown;
 }
 
 // Friendly labels for the inline "working" checklist. Keyed so repeated calls
