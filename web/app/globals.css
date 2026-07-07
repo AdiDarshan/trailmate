@@ -130,14 +130,49 @@ button { font-family: inherit; }
 }
 .tm-rail-btn:hover { background: #e5e0d1; }
 .tm-rail-btn svg { color: var(--olive); }
-.tm-prefs { display: flex; flex-direction: column; gap: 8px; }
-.tm-prefs textarea {
-  width: 100%; resize: vertical; min-height: 72px; border: 1px solid #cdc9b7; border-radius: 10px;
-  padding: 9px 11px; font: inherit; font-size: 12.5px; color: var(--text); background: #fdfcf7;
+/* Sidebar "My preferences" entry — rail-button look plus a count badge. */
+.tm-prefsbtn { justify-content: space-between; }
+.tm-prefsbtn-label { display: flex; align-items: center; gap: 8px; }
+.tm-prefsbtn-badge {
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.08em;
+  background: #e5e0d1; border: 1px solid #cdc9b7; color: var(--ink-2); border-radius: 5px; padding: 2px 6px;
 }
-.tm-prefs textarea:focus { outline: none; border-color: var(--olive); }
-.tm-prefs .tm-newtrip { align-self: flex-end; }
-.tm-prefs .tm-newtrip:disabled { opacity: 0.55; cursor: default; }
+
+/* Preferences screen ("How you like to travel"). */
+.tm-prefs-page { flex: 1; min-height: 0; overflow-y: auto; padding: 30px 38px; max-width: 980px; }
+.tm-prefs-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.tm-prefs-title { font-family: var(--font-serif); font-size: 28px; font-weight: 600; color: var(--ink); line-height: 1; margin-top: 7px; }
+.tm-prefs-sub { font-size: 13.5px; color: var(--muted); margin-top: 8px; }
+.tm-prefs-saved {
+  display: flex; align-items: center; gap: 6px; background: #e7ecdf; border: 1px solid #cdd6bb;
+  border-radius: 18px; padding: 6px 13px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); white-space: nowrap;
+}
+.tm-prefs-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px; margin-top: 18px; align-items: stretch;
+}
+.tm-pref-card { border: 1px solid; border-radius: 15px; padding: 16px 18px; }
+.tm-pref-card-head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 500;
+}
+.tm-pref-label { font-size: 12px; color: var(--muted); margin-bottom: 7px; }
+.tm-pref-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.tm-pref-chip {
+  background: var(--paper-2); border: 1px solid #dfdac9; border-radius: 9px; padding: 7px 14px;
+  font-size: 12.5px; color: var(--text-2); white-space: nowrap; cursor: pointer;
+}
+.tm-pref-chip:hover { border-color: var(--olive); }
+.tm-pref-chip-on { background: var(--ink-2); border-color: var(--ink-2); color: var(--card-hike); font-weight: 600; }
+.tm-prefs-extra {
+  margin-top: 14px; display: flex; align-items: center; gap: 12px;
+  background: var(--paper-2); border: 1px solid var(--line-2); border-radius: 14px; padding: 12px 16px;
+}
+.tm-prefs-extra input {
+  flex: 1; min-width: 0; border: none; background: transparent; outline: none;
+  font: inherit; font-size: 13.5px; color: var(--text);
+}
+.tm-prefs-extra input::placeholder { color: var(--muted-2); }
 .tm-user { display: flex; align-items: center; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line); }
 .tm-avatar {
   width: 30px; height: 30px; border-radius: 50%; background: #c9d0b4; flex: 0 0 auto;

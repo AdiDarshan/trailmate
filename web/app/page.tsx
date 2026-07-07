@@ -7,7 +7,9 @@ import Sidebar from "@/components/Sidebar";
 import Welcome from "@/components/Welcome";
 import Chat from "@/components/Chat";
 import Notebook from "@/components/Notebook";
+import Preferences from "@/components/Preferences";
 import { useAgent } from "@/lib/useAgent";
+import { EMPTY_PICKS, countSetPrefs, parsePrefs, serializePrefs, type PrefPicks } from "@/lib/prefs";
 import type { Itinerary, TripSummary } from "@/server/shared/types";
 
 function Home() {
@@ -20,6 +22,41 @@ function Home() {
   // True once the persisted current chat has been restored (or ruled out) —
   // gates the main pane so a saved conversation doesn't flash as Welcome.
   const [booted, setBooted] = useState(false);
+
+  // Standing preferences — structured picks over the one stored text field.
+  // Owned here so the sidebar badge and the preferences screen stay in sync.
+  const [prefsView, setPrefsView] = useState(false);
+  const [prefPicks, setPrefPicks] = useState<PrefPicks>(EMPTY_PICKS);
+  const [prefsSaving, setPrefsSaving] = useState(false);
+  useEffect(() => {
+    fetch("/api/prefs", { cache: "no-store" })
+      .then(async (res) => {
+        if (res.ok) setPrefPicks(parsePrefs((await res.json()).preferences ?? ""));
+      })
+      .catch(() => {}); // screen starts empty; taps still save
+  }, []);
+
+  // Auto-save: every tap PUTs the serialized string (the field the agent reads).
+  const updatePrefs = useCallback(async (picks: PrefPicks) => {
+    setPrefPicks(picks);
+    setPrefsSaving(true);
+    try {
+      await fetch("/api/prefs", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ preferences: serializePrefs(picks) }),
+      });
+    } catch (e) {
+      console.error("savePrefs failed:", e); // next tap retries the whole state
+    } finally {
+      setPrefsSaving(false);
+    }
+  }, []);
+
+  const openPrefs = useCallback(() => {
+    setPrefsView(true);
+    setRailOpen(false);
+  }, []);
 
   // Agent presented a fresh plan or edited the open one. Either way it's now
   // unsaved so the Save button reappears; currentTripId is left intact so saving
@@ -103,6 +140,7 @@ function Home() {
     setItinerary(pending ?? data);
     setCurrentTripId(id);
     setIsSaved(!pending);
+    setPrefsView(false);
     setRailOpen(false);
   }, [agent]);
 
@@ -117,6 +155,7 @@ function Home() {
     setItinerary(null);
     setCurrentTripId(null);
     setIsSaved(false);
+    setPrefsView(false);
     agent.reset();
     setRailOpen(false);
   }, [agent]);
@@ -170,6 +209,8 @@ function Home() {
         onOpen={openTrip}
         onNew={newTrip}
         onHome={newTrip}
+        onPrefs={openPrefs}
+        prefsCount={countSetPrefs(prefPicks)}
         className={railOpen ? "tm-rail-open" : ""}
       />
 
@@ -177,7 +218,9 @@ function Home() {
         {/* Notebook once there's a concrete plan; otherwise the chat (which shows a
             live checklist while the agent works); Welcome is the empty state.
             Nothing renders until the persisted chat is restored (no Welcome flash). */}
-        {!booted ? null : itinerary ? (
+        {!booted ? null : prefsView ? (
+          <Preferences picks={prefPicks} saving={prefsSaving} onChange={updatePrefs} />
+        ) : itinerary ? (
           <Notebook
             itinerary={itinerary}
             tripId={isSaved ? currentTripId : null}
