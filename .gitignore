@@ -12,3 +12,6 @@
 # Logs
 *.log
 logs/
+
+# Local working notes
+CHANGELOG_REFACTOR.md
