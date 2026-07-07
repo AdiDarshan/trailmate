@@ -20,6 +20,10 @@ const SNOW_CODES = [71, 73, 75];
 const STRONG_WIND_KMH = 40;
 const VERY_HOT_C = 33;
 
+/** The advice line meaning "no problems" — consumers (reminder scheduler)
+ *  filter against this exact string, so keep it in one place. */
+export const ALL_CLEAR_ADVICE = "Good conditions for hiking";
+
 const WMO: Record<number, string> = {
   0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
   45: "Foggy", 48: "Icy fog",
@@ -153,7 +157,7 @@ export function formatForecast(raw: any, displayName: string, lat: number, lng: 
     if (SNOW_CODES.includes(code)) advice.push("Snow possible — trails may be closed");
     if (windKmh > STRONG_WIND_KMH) advice.push("Strong winds — avoid exposed ridges");
     if (tempMax !== null && tempMax > VERY_HOT_C) advice.push("Very hot — start hike early, carry extra water");
-    if (advice.length === 0) advice.push("Good conditions for hiking");
+    if (advice.length === 0) advice.push(ALL_CLEAR_ADVICE);
     return {
       date: d,
       condition,
@@ -176,6 +180,15 @@ class WeatherService {
     const [lat, lng, name] = await geocode(location);
     const [raw, historical] = await fetchRaw(lat, lng, start, d);
     return formatForecast(raw, name, lat, lng, historical);
+  }
+
+  /** Forecast at known coordinates — skips geocoding (used by the reminder
+   *  scheduler, which has exact trailhead coords from the itinerary). */
+  async forecastAt(lat: number, lng: number, label: string, date?: string, days = 3) {
+    const d = Math.max(1, Math.min(FORECAST_HORIZON_DAYS, days));
+    const start = parseStartDate(date);
+    const [raw, historical] = await fetchRaw(lat, lng, start, d);
+    return formatForecast(raw, label, lat, lng, historical);
   }
 }
 

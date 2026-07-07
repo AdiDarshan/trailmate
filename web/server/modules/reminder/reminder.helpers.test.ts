@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { addDaysISO, dayDate, dayOnDate, israelToday } from "./reminder.helpers";
+import {
+  addDaysISO,
+  coordsFromMapsLink,
+  dayDate,
+  dayOnDate,
+  daysUntil,
+  israelToday,
+  tripHotelLines,
+  weatherProblems,
+  type ForecastDay,
+} from "./reminder.helpers";
 import type { Day } from "../../shared/types";
 
 describe("israelToday", () => {
@@ -44,5 +54,71 @@ describe("dayOnDate", () => {
   it("returns undefined when no day matches", () => {
     expect(dayOnDate(days, "2026-07-11", "2026-07-20")).toBeUndefined();
     expect(dayOnDate([], "2026-07-11", "2026-07-11")).toBeUndefined();
+  });
+});
+
+describe("daysUntil", () => {
+  it("counts whole days between ISO dates", () => {
+    expect(daysUntil("2026-07-07", "2026-08-06")).toBe(30);
+    expect(daysUntil("2026-07-07", "2026-07-08")).toBe(1);
+    expect(daysUntil("2026-07-07", "2026-07-07")).toBe(0);
+    expect(daysUntil("2026-07-07", "2026-07-05")).toBe(-2); // trip already started
+  });
+});
+
+describe("coordsFromMapsLink", () => {
+  it("parses lat/lng from a Google Maps q= link", () => {
+    expect(coordsFromMapsLink("https://www.google.com/maps?q=32.9312,35.7011")).toEqual({
+      lat: 32.9312,
+      lng: 35.7011,
+    });
+    expect(coordsFromMapsLink("https://maps.google.com/?zoom=10&q=-31.5,34.25")).toEqual({
+      lat: -31.5,
+      lng: 34.25,
+    });
+  });
+
+  it("returns null for missing/unparseable links", () => {
+    expect(coordsFromMapsLink(undefined)).toBeNull();
+    expect(coordsFromMapsLink(null)).toBeNull();
+    expect(coordsFromMapsLink("https://waze.com/ul/hsv8x0")).toBeNull();
+  });
+});
+
+describe("tripHotelLines", () => {
+  it("lists hotels by day, deduped by name across nights", () => {
+    const days = [
+      { day_number: 1, hotel: { name: "Isrotel Lagoona" } },
+      { day_number: 2, hotel: { name: "isrotel lagoona " } }, // same hotel, 2nd night
+      { day_number: 3, hotel: { name: "Desert Lodge" } },
+      { day_number: 4 }, // no hotel that night
+    ] as Day[];
+    expect(tripHotelLines(days)).toEqual(["Day 1: Isrotel Lagoona", "Day 3: Desert Lodge"]);
+    expect(tripHotelLines([])).toEqual([]);
+  });
+});
+
+describe("weatherProblems", () => {
+  const day = (advice: string[]): ForecastDay => ({
+    date: "2026-07-11",
+    condition: "Clear sky",
+    temp_max_c: 30,
+    rain_mm: 0,
+    wind_kmh: 10,
+    advice,
+  });
+
+  it("keeps only days with a non-all-clear advice line", () => {
+    const problems = weatherProblems([
+      day(["Good conditions for hiking"]),
+      day(["Rain expected — bring waterproof jacket", "Strong winds — avoid exposed ridges"]),
+    ]);
+    expect(problems).toHaveLength(1);
+    expect(problems[0].issues).toHaveLength(2);
+  });
+
+  it("returns empty for an all-clear or empty forecast", () => {
+    expect(weatherProblems([day(["Good conditions for hiking"])])).toEqual([]);
+    expect(weatherProblems([])).toEqual([]);
   });
 });

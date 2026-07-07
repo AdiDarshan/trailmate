@@ -35,7 +35,7 @@ class CronController {
       return new Response("Unauthorized", { status: 401 });
     }
     try {
-      const result = await log.timed("daily_summaries", {}, () => reminderService.runDailySummaries());
+      const result = await log.timed("daily_rules", {}, () => reminderService.runDaily());
       return Response.json({ ok: true, ...result });
     } catch (e) {
       log.error("cron_daily_failed", errInfo(e));
