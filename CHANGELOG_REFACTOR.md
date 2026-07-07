@@ -1,5 +1,9 @@
 # Refactor log — codebase vs REVIEW.md rubric
 
+(REVIEW.md — the four-axis rubric this log answers to: code quality, error
+handling, tests, observability — was removed after the refactor landed; it's
+in git history alongside this file's first commit.)
+
 Running record, one section per module, written as each module lands (in risk
 order: auth/db → chat → trip → telegram → reminder → agent → data services →
 routes → client). Axes per REVIEW.md: **Q**uality, **E**rror handling,
