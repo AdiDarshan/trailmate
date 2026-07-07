@@ -10,8 +10,8 @@ import { chatService } from "./chat.service";
 import { chatDbService, type ChatSession } from "./chat.dbservice";
 import { tripService } from "../trip/trip.service";
 import { getAuthUser } from "../../db/supabase-auth";
-import { toPublicMessage } from "../../shared/errors";
-import { createLogger, errInfo } from "../../shared/logger";
+import { NotFoundError, toPublicMessage } from "../../shared/errors";
+import { bindRequestContext, createLogger, errInfo } from "../../shared/logger";
 import type { ChatMessage, Itinerary } from "../../shared/types";
 
 const log = createLogger("chat.controller");
@@ -65,7 +65,7 @@ class ChatController {
       if (tripId) currentTrip = await tripService.load(tripId, user.id);
       if (!currentTrip) currentTrip = session.itinerary;
     } catch (e) {
-      if ((e as any)?.name === "SessionNotFound") {
+      if (e instanceof NotFoundError) {
         return new Response("Session not found", { status: 404 });
       }
       log.error("chat_setup_failed", { userId: user.id, sessionId, tripId, ...errInfo(e) });
@@ -75,7 +75,9 @@ class ChatController {
     const activeSession = session;
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
-      async start(controller) {
+      // The framework pulls this stream after handle() returns — re-bind the
+      // request context so the turn's logs keep their requestId.
+      start: bindRequestContext(async (controller: ReadableStreamDefaultController<Uint8Array>) => {
         // First event tells the client which session to continue.
         controller.enqueue(encoder.encode(JSON.stringify({ type: "session", id: activeSession.id }) + "\n"));
         let assistantText = "";
@@ -104,7 +106,7 @@ class ChatController {
           }
           controller.close();
         }
-      },
+      }),
     });
 
     return new Response(stream, { headers: NDJSON_HEADERS });
@@ -140,11 +142,7 @@ class ChatController {
   ): Promise<ChatSession> {
     if (sessionId) {
       const session = await chatDbService.getSession(sessionId, userId);
-      if (!session) {
-        const notFound = new Error(`session ${sessionId} not found for user`);
-        notFound.name = "SessionNotFound";
-        throw notFound;
-      }
+      if (!session) throw new NotFoundError(`session ${sessionId} not found for user`);
       return session;
     }
     if (tripId) {

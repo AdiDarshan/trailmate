@@ -8,12 +8,43 @@
 //   const res = await log.timed("openai_chat", { model }, () => client.chat...);
 //   // → {"level":"info","module":"chat.service","event":"openai_chat","outcome":"ok","ms":812,...}
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
 type Level = "debug" | "info" | "warn" | "error";
 
 export type LogFields = Record<string, unknown>;
 
+// Correlation: one id per HTTP request, stamped on every log line emitted
+// within it, so a single turn's logs (controller → service → tools) can be
+// stitched together under concurrent traffic. All API routes run on the Node
+// runtime, so async_hooks is safe here.
+const requestStore = new AsyncLocalStorage<{ requestId: string }>();
+
+/** Wrap a route handler so every log line it (transitively) emits carries one requestId. */
+export function withRequestContext<T>(fn: () => T): T {
+  return requestStore.run({ requestId: crypto.randomUUID().slice(0, 8) }, fn);
+}
+
+/**
+ * Capture the current request context onto a callback that will run after the
+ * handler returns (e.g. a ReadableStream pulled by the framework) — ALS does
+ * not reliably propagate into those on its own.
+ */
+export function bindRequestContext<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const store = requestStore.getStore();
+  return store ? (...args: A) => requestStore.run(store, fn, ...args) : fn;
+}
+
 function emit(level: Level, module: string, event: string, fields?: LogFields): void {
-  const record: LogFields = { ts: new Date().toISOString(), level, module, event, ...fields };
+  const requestId = requestStore.getStore()?.requestId;
+  const record: LogFields = {
+    ts: new Date().toISOString(),
+    level,
+    module,
+    event,
+    ...(requestId !== undefined && { requestId }),
+    ...fields,
+  };
   let line: string;
   try {
     line = JSON.stringify(record);

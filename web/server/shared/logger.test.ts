@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createLogger, errInfo } from "./logger";
+import { bindRequestContext, createLogger, errInfo, withRequestContext } from "./logger";
 import { AppError, GENERIC_USER_ERROR, toPublicMessage } from "./errors";
 
 afterEach(() => vi.restoreAllMocks());
@@ -42,6 +42,49 @@ describe("createLogger", () => {
       error: "boom",
       id: 7,
     });
+  });
+});
+
+describe("request correlation", () => {
+  it("stamps the same requestId on every line inside one context, none outside", async () => {
+    const spy = vi.spyOn(console, "info").mockImplementation(() => {});
+    const log = createLogger("t");
+
+    await withRequestContext(async () => {
+      log.info("first");
+      await Promise.resolve(); // survives async continuations
+      log.info("second");
+    });
+    log.info("outside");
+
+    const lines = spy.mock.calls.map((c) => JSON.parse(c[0] as string));
+    expect(typeof lines[0].requestId).toBe("string");
+    expect(lines[1].requestId).toBe(lines[0].requestId);
+    expect(lines[2].requestId).toBeUndefined();
+  });
+
+  it("two contexts get distinct ids", () => {
+    const spy = vi.spyOn(console, "info").mockImplementation(() => {});
+    const log = createLogger("t");
+    withRequestContext(() => log.info("a"));
+    withRequestContext(() => log.info("b"));
+    const [a, b] = spy.mock.calls.map((c) => JSON.parse(c[0] as string));
+    expect(a.requestId).not.toBe(b.requestId);
+  });
+
+  it("bindRequestContext carries the id into a callback run outside the context", async () => {
+    const spy = vi.spyOn(console, "info").mockImplementation(() => {});
+    const log = createLogger("t");
+
+    let bound: () => void = () => {};
+    withRequestContext(() => {
+      log.info("inside");
+      bound = bindRequestContext(() => log.info("later"));
+    });
+    bound(); // simulates the framework pulling a stream after the handler returned
+
+    const [inside, later] = spy.mock.calls.map((c) => JSON.parse(c[0] as string));
+    expect(later.requestId).toBe(inside.requestId);
   });
 });
 
