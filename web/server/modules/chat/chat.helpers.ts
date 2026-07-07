@@ -99,6 +99,19 @@ export function filterSavedTrails(
   };
 }
 
+const START_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Guarantee a machine-readable start_date on every presented itinerary —
+ * reminders (hotel, day-before, weather) silently skip trips without one. The
+ * schema requires it and the prompt tells the model to ask/default, but a
+ * model that slips through gets stamped with the fallback (tomorrow).
+ */
+export function ensureStartDate(it: Itinerary, fallbackIso: string): Itinerary {
+  if (typeof it.start_date === "string" && START_DATE_RE.test(it.start_date)) return it;
+  return { ...it, start_date: fallbackIso };
+}
+
 // ── Catalog-only itinerary gate ──────────────────────────────────────────────
 // Only trails the tiuli catalog actually returned (this turn, or already on the
 // trip being edited / in saved trips) may be presented. This is the hard stop

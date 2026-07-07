@@ -4,6 +4,7 @@ import {
   backfillPlace,
   backfillTrail,
   collectTrailCandidates,
+  ensureStartDate,
   filterSavedTrails,
   findUncatalogedTrails,
   isConcreteItinerary,
@@ -181,5 +182,20 @@ describe("catalog-only itinerary gate", () => {
     collectTrailCandidates({ not: "an array" }, empty);
     expect(empty.names.size).toBe(0);
     expect(empty.urls.size).toBe(0);
+  });
+});
+
+describe("ensureStartDate", () => {
+  const it_ = (start_date?: string) =>
+    ({ title: "t", start_date, days: [] }) as Itinerary;
+
+  it("keeps a valid YYYY-MM-DD start_date", () => {
+    expect(ensureStartDate(it_("2026-08-01"), "2026-07-08").start_date).toBe("2026-08-01");
+  });
+
+  it("stamps the fallback on missing or malformed dates", () => {
+    expect(ensureStartDate(it_(), "2026-07-08").start_date).toBe("2026-07-08");
+    expect(ensureStartDate(it_("July 8"), "2026-07-08").start_date).toBe("2026-07-08");
+    expect(ensureStartDate(it_("2026-7-8"), "2026-07-08").start_date).toBe("2026-07-08");
   });
 });

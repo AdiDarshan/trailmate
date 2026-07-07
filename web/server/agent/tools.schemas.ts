@@ -137,9 +137,13 @@ export const TOOL_SPECS = {
     args: z.object({
       title: z.string().describe("e.g. '2-Day Trip: Galilee'"),
       dates: z.string().optional().describe("Human display range, e.g. 'June 23–24, 2026'"),
-      start_date: z.string().optional().describe(
-        "Machine date of day 1 as YYYY-MM-DD (e.g. '2026-06-27'). Required for reminders.",
-      ),
+      start_date: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, "start_date must be YYYY-MM-DD")
+        .describe(
+          "REQUIRED — machine date of day 1 as YYYY-MM-DD (e.g. '2026-06-27'). " +
+            "Ask the user for the date; if they don't know, use tomorrow.",
+        ),
       days: z.array(dayArgs).describe("One entry per day."),
     }),
   },

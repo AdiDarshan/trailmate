@@ -11,12 +11,14 @@ import type { ChatMessage, Itinerary, SavedTrailRefs } from "../../shared/types"
 import {
   STEP_LABELS,
   collectTrailCandidates,
+  ensureStartDate,
   filterSavedTrails,
   findUncatalogedTrails,
   isConcreteItinerary,
   mergeEditedItinerary,
   newTrailCandidates,
 } from "./chat.helpers";
+import { addDaysISO, israelToday } from "../reminder/reminder.helpers";
 
 const MODEL = "gpt-4o";
 const SUMMARY_MODEL = "gpt-4o-mini";
@@ -234,7 +236,8 @@ class ChatService {
             } else {
               // Editing an existing trip → restore links the model dropped for
               // unchanged trails/places. Fresh trips (no currentTrip) pass through.
-              presented = currentTrip ? mergeEditedItinerary(currentTrip, fresh) : fresh;
+              const merged = currentTrip ? mergeEditedItinerary(currentTrip, fresh) : fresh;
+              presented = ensureStartDate(merged, addDaysISO(israelToday(), 1));
             }
           }
           messages.push({ role: "tool", tool_call_id: c.id, content: JSON.stringify(result) });
@@ -263,6 +266,7 @@ class ChatService {
         const forceView = (await context.enforceCompaction(messages as ContextMessage[])) as ChatParam[];
         let forced = await this.forcePresent(client, forceView);
         if (forced && currentTrip) forced = mergeEditedItinerary(currentTrip, forced);
+        if (forced) forced = ensureStartDate(forced, addDaysISO(israelToday(), 1));
         if (forced) {
           // The forced call bypasses the loop's rejection path — apply the same
           // catalog gate here; an invented trail falls through to the text fallback.

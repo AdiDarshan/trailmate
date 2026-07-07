@@ -73,9 +73,19 @@ describe("executeTool", () => {
   it("echoes present_itinerary back as a preview payload", async () => {
     const res = (await executeTool("present_itinerary", {
       title: "Trip",
+      start_date: "2026-07-11",
       days: [{ day_number: 1, date: "Sat" }],
     })) as any;
     expect(res.itinerary.title).toBe("Trip");
     expect(res.itinerary.days).toHaveLength(1);
+  });
+
+  it("rejects present_itinerary without a machine-readable start_date", async () => {
+    const res = (await executeTool("present_itinerary", {
+      title: "Trip",
+      days: [{ day_number: 1, date: "Sat" }],
+    })) as any;
+    expect(res.status).toBe("error");
+    expect(JSON.stringify(res.issues)).toContain("start_date");
   });
 });
