@@ -257,6 +257,7 @@ function Home() {
             onSave={saveTrip}
             messages={agent.messages}
             busy={agent.busy}
+            steps={agent.steps}
             onSend={send}
           />
         ) : agent.messages.length > 0 ? (

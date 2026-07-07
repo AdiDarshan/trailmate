@@ -7,6 +7,7 @@
 // clients only ever receive AppError.publicMessage or a generic message.
 
 import { chatService } from "./chat.service";
+import { formatStepSummary } from "./chat.helpers";
 import { chatDbService, type ChatSession } from "./chat.dbservice";
 import { tripService } from "../trip/trip.service";
 import { prefsDbService } from "../prefs/prefs.dbservice";
@@ -95,10 +96,14 @@ class ChatController {
         // First event tells the client which session to continue.
         controller.enqueue(encoder.encode(JSON.stringify({ type: "session", id: activeSession.id }) + "\n"));
         let assistantText = "";
+        const stepLabels: string[] = [];
+        let presented = false;
         try {
           for await (const event of chatService.run(history, currentTrip, savedTrails, preferences)) {
             if (event.type === "text") assistantText += event.v;
+            if (event.type === "step") stepLabels.push(event.label);
             if (event.type === "itinerary") {
+              presented = true;
               await chatDbService.setItinerary(activeSession.id, event.data);
             }
             controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
@@ -109,11 +114,18 @@ class ChatController {
             encoder.encode(JSON.stringify({ type: "error", message: toPublicMessage(e) }) + "\n"),
           );
         } finally {
-          // Persist the visible reply (planning turns stream no prose — the
-          // outcome of those lives in the session's itinerary instead).
-          if (assistantText.trim()) {
+          // Persist the visible reply. Planning turns stream no prose — for
+          // those, persist the step checklist as the turn's message so the
+          // conversation keeps a durable record (only on success: an errored
+          // turn must not claim "here's what I did").
+          const persistText = assistantText.trim()
+            ? assistantText
+            : presented && stepLabels.length > 0
+              ? formatStepSummary(stepLabels)
+              : "";
+          if (persistText) {
             await chatDbService
-              .addMessage(activeSession.id, "assistant", assistantText)
+              .addMessage(activeSession.id, "assistant", persistText)
               .catch((e) =>
                 log.error("assistant_persist_failed", { sessionId: activeSession.id, ...errInfo(e) }),
               );

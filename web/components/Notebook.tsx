@@ -6,9 +6,11 @@ import remarkGfm from "remark-gfm";
 import {
   Footprints, Utensils, BedDouble, CloudSun, WandSparkles, Clock, Gauge,
   ExternalLink, TriangleAlert, Calendar, Share2, ArrowUp, Sparkles, Compass,
-  MessageSquare, ChevronDown, Mountain,
+  MessageSquare, ChevronDown, Mountain, LoaderCircle,
 } from "lucide-react";
 import IsraelMap from "./IsraelMap";
+import StepChecklist from "./StepChecklist";
+import type { AgentStep } from "@/lib/useAgent";
 import type { Day, Itinerary, Place, Trail } from "@/server/shared/types";
 
 // The trailhead coords are embedded in the Maps/Waze links (q=lat,lng / ll=lat,lng).
@@ -213,7 +215,7 @@ function WeatherCard({ day }: { day: Day }) {
 }
 
 export default function Notebook({
-  itinerary, tripId, canSave, onSave, messages, busy, onSend,
+  itinerary, tripId, canSave, onSave, messages, busy, steps, onSend,
 }: {
   itinerary: Itinerary;
   tripId: string | null;
@@ -221,6 +223,7 @@ export default function Notebook({
   onSave: () => void | Promise<void>;
   messages: { role: "user" | "assistant"; content: string }[];
   busy: boolean;
+  steps: AgentStep[];
   onSend: (text: string) => void;
 }) {
   const [active, setActive] = useState(0);
@@ -235,12 +238,12 @@ export default function Notebook({
   useEffect(() => { if (!busy) setRefining(null); }, [busy]);
 
   // Keep the conversation log pinned to the latest message — on open and as
-  // replies stream in. Scrolls the log box itself, never the page.
+  // replies/steps stream in. Scrolls the log box itself, never the page.
   const logRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, busy, chatOpen]);
+  }, [messages, busy, steps, chatOpen]);
 
   const days: Day[] = itinerary.days ?? [];
   const day = days[active];
@@ -339,25 +342,35 @@ export default function Notebook({
           <button className="tm-global-toggle" onClick={() => setChatOpen((o) => !o)}>
             <MessageSquare size={13} strokeWidth={1.8} />
             {chatOpen ? "Hide conversation" : `Conversation (${Math.ceil(messages.length / 2)})`}
+            {/* Working while collapsed → a visible signal without expanding. */}
+            {busy && !chatOpen && <LoaderCircle size={13} className="tm-spin" color="var(--olive)" />}
             <ChevronDown size={13} strokeWidth={1.8} style={{ transform: chatOpen ? "rotate(180deg)" : "none" }} />
           </button>
         )}
         {chatOpen && messages.length > 0 && (
           <div className="tm-global-log" ref={logRef}>
-            {messages.map((m, i) => (
-              <div key={i} className={`tm-msg ${m.role === "user" ? "tm-msg-user" : ""}`}>
-                {m.role === "assistant" && (
-                  <div className="tm-msg-avatar"><Compass size={14} strokeWidth={1.8} /></div>
-                )}
-                <div className="tm-msg-body">
-                  {m.content ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: (p) => <a {...p} target="_blank" rel="noreferrer" /> }}>
-                      {m.content}
-                    </ReactMarkdown>
-                  ) : busy && i === messages.length - 1 ? "…" : ""}
+            {messages.map((m, i) => {
+              // Skip an empty assistant bubble unless it's the live "…" placeholder
+              // (busy, last, and no checklist showing) — the checklist stands in for it.
+              // Mirrors Chat.tsx.
+              const isPlaceholder = busy && i === messages.length - 1 && steps.length === 0;
+              if (m.role === "assistant" && !m.content && !isPlaceholder) return null;
+              return (
+                <div key={i} className={`tm-msg ${m.role === "user" ? "tm-msg-user" : ""}`}>
+                  {m.role === "assistant" && (
+                    <div className="tm-msg-avatar"><Compass size={14} strokeWidth={1.8} /></div>
+                  )}
+                  <div className="tm-msg-body">
+                    {m.content ? (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: (p) => <a {...p} target="_blank" rel="noreferrer" /> }}>
+                        {m.content}
+                      </ReactMarkdown>
+                    ) : "…"}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
+            <StepChecklist steps={steps} busy={busy} />
           </div>
         )}
         <div className="tm-global-bar">

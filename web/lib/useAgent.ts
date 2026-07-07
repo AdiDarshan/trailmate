@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { formatStepSummary } from "@/server/modules/chat/chat.helpers";
 import type { ChatMessage, Itinerary } from "@/server/shared/types";
 
 // One row in the inline "working" checklist (a tool the agent ran this turn).
@@ -69,6 +70,8 @@ export function useAgent(onItinerary: (data: Itinerary) => void) {
       const decoder = new TextDecoder();
       let buffer = "";
       let assistant = "";
+      const turnSteps: string[] = [];
+      let presented = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -90,17 +93,31 @@ export function useAgent(onItinerary: (data: Itinerary) => void) {
             assistant += ev.v ?? "";
             setMessages([...next, { role: "assistant", content: assistant }]);
           } else if (ev.type === "step" && ev.key) {
+            if (!turnSteps.includes(ev.label ?? ev.key)) turnSteps.push(ev.label ?? ev.key);
             setSteps((prev) =>
               prev.some((s) => s.key === ev.key)
                 ? prev
                 : [...prev, { key: ev.key!, label: ev.label ?? ev.key! }],
             );
           } else if (ev.type === "itinerary" && ev.data) {
+            presented = true;
             onItineraryRef.current(ev.data);
           } else if (ev.type === "error") {
             assistant += `\n\n⚠️ ${ev.message}`;
             setMessages([...next, { role: "assistant", content: assistant }]);
           }
+        }
+      }
+      // Notebook-building turns stream no text. Materialize the checklist as
+      // the turn's message — the same summary the server persists — so the
+      // conversation keeps a durable record (and clear the live checklist,
+      // which the message replaces). Otherwise drop the empty placeholder.
+      if (!assistant) {
+        if (presented && turnSteps.length > 0) {
+          setMessages([...next, { role: "assistant", content: formatStepSummary(turnSteps) }]);
+          setSteps([]);
+        } else {
+          setMessages(next);
         }
       }
     } catch (e) {
