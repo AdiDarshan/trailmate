@@ -130,6 +130,14 @@ button { font-family: inherit; }
 }
 .tm-rail-btn:hover { background: #e5e0d1; }
 .tm-rail-btn svg { color: var(--olive); }
+.tm-prefs { display: flex; flex-direction: column; gap: 8px; }
+.tm-prefs textarea {
+  width: 100%; resize: vertical; min-height: 72px; border: 1px solid #cdc9b7; border-radius: 10px;
+  padding: 9px 11px; font: inherit; font-size: 12.5px; color: var(--text); background: #fdfcf7;
+}
+.tm-prefs textarea:focus { outline: none; border-color: var(--olive); }
+.tm-prefs .tm-newtrip { align-self: flex-end; }
+.tm-prefs .tm-newtrip:disabled { opacity: 0.55; cursor: default; }
 .tm-user { display: flex; align-items: center; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line); }
 .tm-avatar {
   width: 30px; height: 30px; border-radius: 50%; background: #c9d0b4; flex: 0 0 auto;

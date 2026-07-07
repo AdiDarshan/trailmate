@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Compass, Plus, Map, Send } from "lucide-react";
+import { Compass, Plus, Map, Send, SlidersHorizontal, ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
 import About from "./About";
 import type { TripSummary } from "@/server/shared/types";
@@ -34,6 +34,35 @@ export default function Sidebar({
         setUser({ name, email: u.email ?? "", initial: (name[0] || "?").toUpperCase() });
       });
   }, []);
+
+  // Standing preferences — free text the agent receives on every turn.
+  const [prefsOpen, setPrefsOpen] = useState(false);
+  const [prefs, setPrefs] = useState("");
+  const [prefsDirty, setPrefsDirty] = useState(false);
+  const [prefsSaving, setPrefsSaving] = useState(false);
+  useEffect(() => {
+    fetch("/api/prefs", { cache: "no-store" })
+      .then(async (res) => {
+        if (res.ok) setPrefs((await res.json()).preferences ?? "");
+      })
+      .catch(() => {}); // panel just starts empty; saving still works
+  }, []);
+
+  async function savePrefs() {
+    setPrefsSaving(true);
+    try {
+      const res = await fetch("/api/prefs", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ preferences: prefs }),
+      });
+      if (res.ok) setPrefsDirty(false);
+    } catch (e) {
+      console.error("savePrefs failed:", e); // button stays enabled for retry
+    } finally {
+      setPrefsSaving(false);
+    }
+  }
 
   async function signOut() {
     const supabase = createClient();
@@ -91,6 +120,36 @@ export default function Sidebar({
 
       <div className="tm-rail-foot">
         <About />
+        <button className="tm-rail-btn" onClick={() => setPrefsOpen((o) => !o)}>
+          <SlidersHorizontal size={14} strokeWidth={1.8} />
+          My preferences
+          <ChevronDown
+            size={13}
+            strokeWidth={1.8}
+            style={{ marginLeft: "auto", transform: prefsOpen ? "rotate(180deg)" : "none" }}
+          />
+        </button>
+        {prefsOpen && (
+          <div className="tm-prefs">
+            <textarea
+              value={prefs}
+              maxLength={1000}
+              rows={4}
+              placeholder={'Things TrailMate should always know — e.g. "vegetarian, easy trails under 8 km, budget hotels, traveling with kids"'}
+              onChange={(e) => {
+                setPrefs(e.target.value);
+                setPrefsDirty(true);
+              }}
+            />
+            <button
+              className="tm-newtrip"
+              onClick={savePrefs}
+              disabled={prefsSaving || !prefsDirty}
+            >
+              {prefsSaving ? "Saving…" : prefsDirty ? "Save" : "Saved"}
+            </button>
+          </div>
+        )}
         <button className="tm-rail-btn" onClick={connectTelegram}>
           <Send size={14} strokeWidth={1.8} />
           Connect Telegram
