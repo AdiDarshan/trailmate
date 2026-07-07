@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Menu, Compass } from "lucide-react";
+import { Menu, Compass, LoaderCircle } from "lucide-react";
 import Sidebar from "@/components/Sidebar";
 import Welcome from "@/components/Welcome";
 import Chat from "@/components/Chat";
@@ -110,39 +110,63 @@ function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Open a saved trip: load it, restore its chat (the only old conversations
-  // that stay reachable), and mark it current. If the trip's session carries a
+  // Open a saved trip: load it and its chat in PARALLEL (they're independent),
+  // with instant feedback — the card highlights and the main pane shows a
+  // loading state the moment the user clicks. If the trip's session carries a
   // presented-but-unsaved edit, show that instead of the saved version.
+  const [tripLoading, setTripLoading] = useState(false);
+  const openSeq = useRef(0); // rapid clicks: only the newest request may apply
   const openTrip = useCallback(async (id: string) => {
-    let data: Itinerary;
-    try {
-      const res = await fetch(`/api/trip/${id}`, { cache: "no-store" });
-      if (!res.ok) return;
-      data = (await res.json()) as Itinerary;
-    } catch (e) {
-      console.error("openTrip failed:", e); // keep current view; user can retry
-      return;
-    }
-    let pending: Itinerary | null = null;
-    try {
-      const s = await fetch(`/api/chat/session?tripId=${id}`, { cache: "no-store" });
-      if (s.ok) {
-        const { sessionId, messages, itinerary } = await s.json();
-        pending = itinerary ?? null;
-        if (sessionId) agent.hydrate(sessionId, messages ?? []);
-        else agent.reset();
-      } else {
-        agent.reset();
-      }
-    } catch {
-      agent.reset();
-    }
-    setItinerary(pending ?? data);
+    const seq = ++openSeq.current;
+    const prevTripId = currentTripId;
     setCurrentTripId(id);
-    setIsSaved(!pending);
+    setTripLoading(true);
     setPrefsView(false);
     setRailOpen(false);
-  }, [agent]);
+
+    const [tripRes, sessionRes] = await Promise.allSettled([
+      fetch(`/api/trip/${id}`, { cache: "no-store" }),
+      fetch(`/api/chat/session?tripId=${id}`, { cache: "no-store" }),
+    ]);
+    if (seq !== openSeq.current) return; // superseded by a newer click
+
+    let data: Itinerary | null = null;
+    try {
+      if (tripRes.status === "fulfilled" && tripRes.value.ok) {
+        data = (await tripRes.value.json()) as Itinerary;
+      }
+    } catch (e) {
+      console.error("openTrip parse failed:", e);
+    }
+
+    let pending: Itinerary | null = null;
+    let hydrated = false;
+    try {
+      if (sessionRes.status === "fulfilled" && sessionRes.value.ok) {
+        const { sessionId, messages, itinerary } = await sessionRes.value.json();
+        pending = itinerary ?? null;
+        if (sessionId) {
+          agent.hydrate(sessionId, messages ?? []);
+          hydrated = true;
+        }
+      }
+    } catch {
+      /* fall through to reset below */
+    }
+    if (seq !== openSeq.current) return;
+    if (!hydrated) agent.reset();
+
+    if (!data && !pending) {
+      // Nothing loaded — undo the optimistic selection; user can retry.
+      console.error("openTrip failed:", id);
+      setCurrentTripId(prevTripId);
+      setTripLoading(false);
+      return;
+    }
+    setItinerary(pending ?? data);
+    setIsSaved(!pending);
+    setTripLoading(false);
+  }, [agent, currentTripId]);
 
   // Deep link: /?trip=<id>
   useEffect(() => {
@@ -218,7 +242,12 @@ function Home() {
         {/* Notebook once there's a concrete plan; otherwise the chat (which shows a
             live checklist while the agent works); Welcome is the empty state.
             Nothing renders until the persisted chat is restored (no Welcome flash). */}
-        {!booted ? null : prefsView ? (
+        {!booted ? null : tripLoading ? (
+          <div className="tm-trip-loading">
+            <LoaderCircle size={18} className="tm-spin" color="var(--olive)" />
+            Opening trip…
+          </div>
+        ) : prefsView ? (
           <Preferences picks={prefPicks} saving={prefsSaving} onChange={updatePrefs} />
         ) : itinerary ? (
           <Notebook
