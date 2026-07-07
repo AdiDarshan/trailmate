@@ -13,6 +13,8 @@ describe("skill registry", () => {
     expect(block).toContain("REGION FIRST");
     expect(block).toContain("WRITE NOTHING IN CHAT");
     expect(block).toContain("MANDATORY");
+    expect(block).toContain("CHANGE ONLY WHAT WAS ASKED");
+    expect(block).toContain("weather_note");
   });
 
   it("lists and resolves references", () => {
@@ -22,6 +24,8 @@ describe("skill registry", () => {
         "trail-search/features",
         "trail-search/regions",
         "trip-planning/itinerary-fields",
+        "hiking-safety/hazards",
+        "hiking-safety/seasons",
       ]),
     );
     for (const path of refs) {

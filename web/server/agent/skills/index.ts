@@ -8,7 +8,9 @@
 // - `references`: on-demand detail the agent fetches with the read_reference
 //   tool — progressive disclosure that keeps the base prompt lean.
 
+import { hikingSafetySkill } from "./hiking-safety";
 import { trailSearchSkill } from "./trail-search";
+import { tripEditingSkill } from "./trip-editing";
 import { tripPlanningSkill } from "./trip-planning";
 
 export interface Skill {
@@ -17,7 +19,12 @@ export interface Skill {
   references?: Record<string, string>;
 }
 
-export const SKILLS: Skill[] = [trailSearchSkill, tripPlanningSkill];
+export const SKILLS: Skill[] = [
+  trailSearchSkill,
+  tripPlanningSkill,
+  tripEditingSkill,
+  hikingSafetySkill,
+];
 
 /** The <available_skills> block for the system prompt. */
 export function buildSkillsBlock(): string {
