@@ -1,12 +1,24 @@
 // Weather business logic — Open-Meteo forecast / historical proxy. No DB;
 // talks to Nominatim (geocode) + Open-Meteo only.
+//
+// Errors thrown here surface as tool results — their audience is the agent
+// (which can rephrase/retry), not the end user, so messages are descriptive.
+
+import { createLogger } from "../../shared/logger";
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
 const ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive";
 const DAILY_FIELDS =
   "temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode,windspeed_10m_max";
-const FORECAST_HORIZON = 16;
+const FORECAST_HORIZON_DAYS = 16;
+const MS_PER_DAY = 86_400_000;
+
+// Advice thresholds (WMO weather codes: https://open-meteo.com/en/docs)
+const RAIN_CODES = [61, 63, 65, 80, 81, 82];
+const SNOW_CODES = [71, 73, 75];
+const STRONG_WIND_KMH = 40;
+const VERY_HOT_C = 33;
 
 const WMO: Record<number, string> = {
   0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
@@ -20,10 +32,14 @@ const WMO: Record<number, string> = {
 
 const UA = { "User-Agent": "TrailMate/1.0 (travel planning agent)" };
 
+const log = createLogger("weather.service");
+
 async function getJson(url: string): Promise<any> {
-  const res = await fetch(url, { headers: UA });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.json();
+  return log.timed("http_get", { host: new URL(url).host }, async () => {
+    const res = await fetch(url, { headers: UA });
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+    return res.json();
+  });
 }
 
 async function geocode(location: string): Promise<[number, number, string]> {
@@ -38,7 +54,12 @@ async function geocode(location: string): Promise<[number, number, string]> {
     throw new Error(`Could not find location: ${location}`);
   }
   const r = results[0];
-  return [parseFloat(r.lat), parseFloat(r.lon), r.display_name ?? location];
+  const lat = parseFloat(r.lat);
+  const lon = parseFloat(r.lon);
+  if (Number.isNaN(lat) || Number.isNaN(lon)) {
+    throw new Error(`Geocoder returned unusable coordinates for: ${location}`);
+  }
+  return [lat, lon, r.display_name ?? location];
 }
 
 function isoDate(d: Date): string {
@@ -51,12 +72,23 @@ function addDays(d: Date, n: number): Date {
   return x;
 }
 
+/** Parse a user/agent-supplied trip date. Throws a clear error on garbage
+ * input instead of letting `toISOString()` die with "Invalid time value". */
+export function parseStartDate(date?: string): Date {
+  if (!date) return new Date(isoDate(new Date()));
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid date: "${date}". Use YYYY-MM-DD.`);
+  }
+  return new Date(isoDate(parsed));
+}
+
 async function fetchRaw(lat: number, lng: number, start: Date, days: number): Promise<[any, boolean]> {
   const today = new Date(isoDate(new Date()));
-  const offset = Math.round((start.getTime() - today.getTime()) / 86_400_000);
+  const offset = Math.round((start.getTime() - today.getTime()) / MS_PER_DAY);
 
-  if (offset <= FORECAST_HORIZON) {
-    const forecastDays = Math.min(Math.max(offset + days, days), FORECAST_HORIZON);
+  if (offset <= FORECAST_HORIZON_DAYS) {
+    const forecastDays = Math.min(Math.max(offset + days, days), FORECAST_HORIZON_DAYS);
     const params = new URLSearchParams({
       latitude: String(lat),
       longitude: String(lng),
@@ -68,11 +100,13 @@ async function fetchRaw(lat: number, lng: number, start: Date, days: number): Pr
     const sliceStart = Math.max(0, offset);
     const daily = raw.daily ?? {};
     for (const key of Object.keys(daily)) {
-      daily[key] = daily[key].slice(sliceStart, sliceStart + days);
+      if (Array.isArray(daily[key])) daily[key] = daily[key].slice(sliceStart, sliceStart + days);
     }
     return [raw, false];
   }
 
+  // Beyond the live horizon → historical proxy: same calendar window, most
+  // recent COMPLETED year (skip back further if that window is still ahead).
   let proxyYear = start.getUTCFullYear() - 1;
   const mk = (y: number) => new Date(Date.UTC(y, start.getUTCMonth(), start.getUTCDate()));
   let proxyStart = mk(proxyYear);
@@ -92,14 +126,17 @@ async function fetchRaw(lat: number, lng: number, start: Date, days: number): Pr
   const raw = await getJson(`${ARCHIVE_URL}?${params}`);
   const daily = raw.daily ?? {};
   if (Array.isArray(daily.time)) {
+    // Relabel proxy rows with the REQUESTED dates so the agent reads them
+    // as the trip's days, not last year's.
     daily.time = daily.time.map((_: string, i: number) => isoDate(addDays(start, i)));
   }
   return [raw, true];
 }
 
-function formatForecast(raw: any, displayName: string, lat: number, lng: number, historical: boolean) {
-  const daily = raw.daily ?? {};
-  const dates: string[] = daily.time ?? [];
+/** Shape one Open-Meteo response into the tool's forecast payload. Pure. */
+export function formatForecast(raw: any, displayName: string, lat: number, lng: number, historical: boolean) {
+  const daily = raw?.daily ?? {};
+  const dates: string[] = Array.isArray(daily.time) ? daily.time : [];
   const maxT = daily.temperature_2m_max ?? [];
   const minT = daily.temperature_2m_min ?? [];
   const rain = daily.precipitation_sum ?? [];
@@ -112,10 +149,10 @@ function formatForecast(raw: any, displayName: string, lat: number, lng: number,
     const windKmh = wind[i] ?? 0;
     const tempMax = maxT[i] ?? null;
     const advice: string[] = [];
-    if ([61, 63, 65, 80, 81, 82].includes(code)) advice.push("Rain expected — bring waterproof jacket");
-    if ([71, 73, 75].includes(code)) advice.push("Snow possible — trails may be closed");
-    if (windKmh > 40) advice.push("Strong winds — avoid exposed ridges");
-    if (tempMax !== null && tempMax > 33) advice.push("Very hot — start hike early, carry extra water");
+    if (RAIN_CODES.includes(code)) advice.push("Rain expected — bring waterproof jacket");
+    if (SNOW_CODES.includes(code)) advice.push("Snow possible — trails may be closed");
+    if (windKmh > STRONG_WIND_KMH) advice.push("Strong winds — avoid exposed ridges");
+    if (tempMax !== null && tempMax > VERY_HOT_C) advice.push("Very hot — start hike early, carry extra water");
     if (advice.length === 0) advice.push("Good conditions for hiking");
     return {
       date: d,
@@ -134,8 +171,8 @@ function formatForecast(raw: any, displayName: string, lat: number, lng: number,
 class WeatherService {
   async forecast(location: string, date?: string, days = 3) {
     if (!location) throw new Error("location is required");
-    const d = Math.max(1, Math.min(16, days));
-    const start = date ? new Date(isoDate(new Date(date))) : new Date(isoDate(new Date()));
+    const d = Math.max(1, Math.min(FORECAST_HORIZON_DAYS, days));
+    const start = parseStartDate(date);
     const [lat, lng, name] = await geocode(location);
     const [raw, historical] = await fetchRaw(lat, lng, start, d);
     return formatForecast(raw, name, lat, lng, historical);

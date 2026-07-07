@@ -19,6 +19,9 @@
 
 import { Tiktoken } from "js-tiktoken/lite";
 import o200k_base from "js-tiktoken/ranks/o200k_base";
+import { createLogger } from "../shared/logger";
+
+const log = createLogger("agent.context");
 
 // Any chat-completion message. Structural on purpose so the module doesn't
 // depend on the OpenAI SDK's param types (mirrors the Python dict approach).
@@ -63,9 +66,12 @@ export class ContextManager {
 
     const pct = this.metrics.input_tokens / this.maxContextTokens;
     if (pct >= 0.6) {
-      console.info(
-        `[context] token budget ${Math.round(pct * 100)}% — in: ${this.metrics.input_tokens} / ${this.maxContextTokens} | out: ${this.metrics.output_tokens}`,
-      );
+      log.info("token_budget", {
+        pct: Math.round(pct * 100),
+        inputTokens: this.metrics.input_tokens,
+        budget: this.maxContextTokens,
+        outputTokens: this.metrics.output_tokens,
+      });
     }
   }
 
@@ -81,9 +87,9 @@ export class ContextManager {
       msg.role === "tool" ? { ...msg, content: "[tool result evicted]" } : msg,
     );
     if (this.estimateTokens(step1) <= this.maxContextTokens) {
-      console.info(
-        `[context] compaction step 1: ${beforeMsgs} msgs / ${beforeTokens} tok → ${step1.length} msgs / ${this.estimateTokens(step1)} tok`,
-      );
+      log.info("compaction", {
+        tier: 1, beforeMsgs, beforeTokens, afterMsgs: step1.length, afterTokens: this.estimateTokens(step1),
+      });
       return step1;
     }
 
@@ -98,9 +104,9 @@ export class ContextManager {
     const lastGroupsFlat = keepLastNGroups(body, KEEP_LAST_GROUPS);
     const step2 = (systemMsg ? [systemMsg] : []).concat(lastGroupsFlat);
     if (this.estimateTokens(step2) <= this.maxContextTokens) {
-      console.info(
-        `[context] compaction step 2: ${beforeMsgs} msgs / ${beforeTokens} tok → ${step2.length} msgs / ${this.estimateTokens(step2)} tok`,
-      );
+      log.info("compaction", {
+        tier: 2, beforeMsgs, beforeTokens, afterMsgs: step2.length, afterTokens: this.estimateTokens(step2),
+      });
       return step2;
     }
 
@@ -108,9 +114,9 @@ export class ContextManager {
     const middle = body.slice(0, body.length - lastGroupsFlat.length);
     if (middle.length === 0 || !this.summarizeFn) {
       // Nothing to summarize (or no LLM injected) — step 2 is the final fallback.
-      console.info(
-        `[context] compaction step 2 only: ${beforeMsgs} msgs / ${beforeTokens} tok → ${step2.length} msgs / ${this.estimateTokens(step2)} tok`,
-      );
+      log.info("compaction", {
+        tier: 2, final: true, beforeMsgs, beforeTokens, afterMsgs: step2.length, afterTokens: this.estimateTokens(step2),
+      });
       return step2;
     }
 
@@ -122,9 +128,9 @@ export class ContextManager {
     const result = (systemMsg ? [systemMsg] : [])
       .concat([summaryMsg])
       .concat(lastGroupsFlat);
-    console.info(
-      `[context] compaction step 3 (summarized): ${beforeMsgs} msgs / ${beforeTokens} tok → ${result.length} msgs / ${this.estimateTokens(result)} tok`,
-    );
+    log.info("compaction", {
+      tier: 3, beforeMsgs, beforeTokens, afterMsgs: result.length, afterTokens: this.estimateTokens(result),
+    });
     return result;
   }
 

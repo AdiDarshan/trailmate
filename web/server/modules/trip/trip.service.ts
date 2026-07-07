@@ -5,7 +5,13 @@ import { nanoid } from "nanoid";
 import { tripDbService } from "./trip.dbservice";
 import { telegramDbService } from "../telegram/telegram.dbservice";
 import { telegramService } from "../telegram/telegram.service";
+import { createLogger, errInfo } from "../../shared/logger";
 import type { Itinerary, TripSummary } from "../../shared/types";
+
+const TRIP_ID_LENGTH = 10;
+const START_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const log = createLogger("trip.service");
 
 class TripService {
   /**
@@ -13,11 +19,12 @@ class TripService {
    * trip) it updates in place; otherwise it creates a new trip. Returns the id.
    */
   async save(itinerary: Itinerary, userId: string, id?: string): Promise<{ trip_id: string }> {
-    const tripId = id ?? nanoid(10);
+    const tripId = id ?? nanoid(TRIP_ID_LENGTH);
     const startDate =
-      typeof itinerary.start_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(itinerary.start_date)
+      typeof itinerary.start_date === "string" && START_DATE_RE.test(itinerary.start_date)
         ? itinerary.start_date
         : null;
+    log.info("save_trip", { tripId, userId, isUpdate: !!id, days: itinerary.days?.length ?? 0 });
     await tripDbService.upsert({
       id: tripId,
       user_id: userId,
@@ -39,8 +46,8 @@ class TripService {
             "I'll remind you the day before each day.",
         );
       }
-    } catch (e: any) {
-      console.error("save confirmation failed:", e?.message ?? e);
+    } catch (e) {
+      log.warn("save_confirmation_failed", { tripId, userId, ...errInfo(e) });
     }
 
     return { trip_id: tripId };

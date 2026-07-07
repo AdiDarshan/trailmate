@@ -3,6 +3,10 @@
 // reminder rules.
 
 import { reminderService } from "./reminder.service";
+import { toPublicMessage } from "../../shared/errors";
+import { createLogger, errInfo } from "../../shared/logger";
+
+const log = createLogger("reminder.cron");
 
 class CronController {
   private authorized(req: Request): boolean {
@@ -14,14 +18,15 @@ class CronController {
 
   async daily(req: Request): Promise<Response> {
     if (!this.authorized(req)) {
+      log.warn("cron_unauthorized", {});
       return new Response("Unauthorized", { status: 401 });
     }
     try {
-      const result = await reminderService.runDailySummaries();
+      const result = await log.timed("daily_summaries", {}, () => reminderService.runDailySummaries());
       return Response.json({ ok: true, ...result });
-    } catch (e: any) {
-      console.error("cron daily failed:", e?.message ?? e);
-      return Response.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
+    } catch (e) {
+      log.error("cron_daily_failed", errInfo(e));
+      return Response.json({ ok: false, error: toPublicMessage(e) }, { status: 500 });
     }
   }
 }

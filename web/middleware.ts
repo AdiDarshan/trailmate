@@ -27,9 +27,21 @@ export async function middleware(req: NextRequest) {
     },
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // An auth-infrastructure failure must not 500 every route — treat it as
+  // signed-out (the user lands on /login and can retry).
+  let user = null;
+  try {
+    ({
+      data: { user },
+    } = await supabase.auth.getUser());
+  } catch (e) {
+    console.error(
+      JSON.stringify({
+        ts: new Date().toISOString(), level: "error", module: "middleware",
+        event: "auth_check_failed", error: e instanceof Error ? e.message : String(e),
+      }),
+    );
+  }
 
   const path = req.nextUrl.pathname;
   const isPublic = PUBLIC_PREFIXES.some((p) => path.startsWith(p));

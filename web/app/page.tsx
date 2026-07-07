@@ -32,8 +32,12 @@ function Home() {
   const agent = useAgent(onItinerary);
 
   const loadTrips = useCallback(async () => {
-    const res = await fetch("/api/trips", { cache: "no-store" });
-    if (res.ok) setTrips((await res.json()).trips ?? []);
+    try {
+      const res = await fetch("/api/trips", { cache: "no-store" });
+      if (res.ok) setTrips((await res.json()).trips ?? []);
+    } catch (e) {
+      console.error("loadTrips failed:", e); // sidebar stays stale; next action retries
+    }
   }, []);
 
   useEffect(() => {
@@ -60,6 +64,8 @@ function Home() {
             }
           }
         }
+      } catch (e) {
+        console.error("chat restore failed:", e); // start fresh rather than block the app
       } finally {
         setBooted(true);
       }
@@ -71,9 +77,15 @@ function Home() {
   // that stay reachable), and mark it current. If the trip's session carries a
   // presented-but-unsaved edit, show that instead of the saved version.
   const openTrip = useCallback(async (id: string) => {
-    const res = await fetch(`/api/trip/${id}`, { cache: "no-store" });
-    if (!res.ok) return;
-    const data = (await res.json()) as Itinerary;
+    let data: Itinerary;
+    try {
+      const res = await fetch(`/api/trip/${id}`, { cache: "no-store" });
+      if (!res.ok) return;
+      data = (await res.json()) as Itinerary;
+    } catch (e) {
+      console.error("openTrip failed:", e); // keep current view; user can retry
+      return;
+    }
     let pending: Itinerary | null = null;
     try {
       const s = await fetch(`/api/chat/session?tripId=${id}`, { cache: "no-store" });
@@ -111,21 +123,25 @@ function Home() {
 
   const saveTrip = useCallback(async () => {
     if (!itinerary) return;
-    const res = await fetch("/api/trips", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        itinerary,
-        id: currentTripId ?? undefined,
-        // Attach this conversation to the trip so opening it later restores the chat.
-        sessionId: agent.sessionId ?? undefined,
-      }),
-    });
-    if (res.ok) {
-      const { trip_id } = await res.json();
-      setCurrentTripId(trip_id);
-      setIsSaved(true);
-      loadTrips();
+    try {
+      const res = await fetch("/api/trips", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          itinerary,
+          id: currentTripId ?? undefined,
+          // Attach this conversation to the trip so opening it later restores the chat.
+          sessionId: agent.sessionId ?? undefined,
+        }),
+      });
+      if (res.ok) {
+        const { trip_id } = await res.json();
+        setCurrentTripId(trip_id);
+        setIsSaved(true);
+        loadTrips();
+      }
+    } catch (e) {
+      console.error("saveTrip failed:", e); // Save button stays visible for retry
     }
   }, [itinerary, currentTripId, agent.sessionId, loadTrips]);
 

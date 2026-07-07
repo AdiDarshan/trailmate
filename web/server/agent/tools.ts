@@ -6,10 +6,13 @@
 import { trailService } from "../modules/trail/trail.service";
 import { placeService } from "../modules/place/place.service";
 import { weatherService } from "../modules/weather/weather.service";
+import { createLogger, errInfo } from "../shared/logger";
 import { getReference, listReferences } from "./skills";
 import { TOOL_SPECS, type ToolArgs, type ToolName } from "./tools.schemas";
 
 export { TOOL_SCHEMAS } from "./tools.schemas";
+
+const log = createLogger("agent.tools");
 
 const EXECUTORS: { [K in ToolName]: (args: ToolArgs<K>) => Promise<unknown> } = {
   search_tiuli: (a) =>
@@ -53,24 +56,31 @@ const EXECUTORS: { [K in ToolName]: (args: ToolArgs<K>) => Promise<unknown> } = 
 // save_trip the model forgot to call.
 export const PLANNING_TOOLS = new Set(["search_tiuli", "search_trails", "search_places"]);
 
+// Every failure is BOTH logged (for ops) and returned as a structured
+// `{status:"error"}` result (an observation the model can react to) — a tool
+// call must never throw into the agent loop.
 export async function executeTool(name: string, args: Record<string, any>): Promise<unknown> {
-  if (!(name in TOOL_SPECS)) return { status: "error", message: `Unknown tool: ${name}` };
+  if (!(name in TOOL_SPECS)) {
+    log.warn("unknown_tool", { tool: name });
+    return { status: "error", message: `Unknown tool: ${name}` };
+  }
   const key = name as ToolName;
 
   // Validate + coerce through the same schema the model was shown. A failed
   // parse becomes a structured error the model can observe and retry on.
   const parsed = TOOL_SPECS[key].args.safeParse(args);
   if (!parsed.success) {
-    return {
-      status: "error",
-      message: `Invalid arguments for ${name}`,
-      issues: parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`),
-    };
+    const issues = parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`);
+    log.warn("tool_args_invalid", { tool: name, issues });
+    return { status: "error", message: `Invalid arguments for ${name}`, issues };
   }
 
   try {
     return await EXECUTORS[key](parsed.data as never);
-  } catch (e: any) {
-    return { status: "error", message: String(e?.message ?? e) };
+  } catch (e) {
+    // Args are model-generated and non-sensitive — logging them makes the
+    // failure reproducible.
+    log.error("tool_failed", { tool: name, args: parsed.data, ...errInfo(e) });
+    return { status: "error", message: errInfo(e).error };
   }
 }

@@ -6,16 +6,29 @@
 import OpenAI from "openai";
 import { trailDbService, type TrailFilters, type TrailRow } from "./trail.dbservice";
 import { normalizeRegion } from "./gazetteer";
+import { createLogger, errInfo } from "../../shared/logger";
 
 const EMBED_MODEL = "text-embedding-3-small";
 
-/** Embed a query string for semantic trail matching. Returns null if unavailable. */
+const log = createLogger("trail.service");
+
+// One client per process, created on first use (module import must not
+// require the API key).
+let openai: OpenAI | null = null;
+
+/** Embed a query string for semantic trail matching. Returns null if
+ * unavailable — the caller falls back to text search, but the WHY is logged
+ * (a missing key looks identical to an outage otherwise). */
 async function embedQuery(text: string): Promise<number[] | null> {
   if (!process.env.OPENAI_API_KEY || !text.trim()) return null;
   try {
-    const res = await new OpenAI().embeddings.create({ model: EMBED_MODEL, input: text });
+    openai ??= new OpenAI();
+    const res = await log.timed("openai_embed", { model: EMBED_MODEL }, () =>
+      openai!.embeddings.create({ model: EMBED_MODEL, input: text }),
+    );
     return res.data[0]?.embedding ?? null;
-  } catch {
+  } catch (e) {
+    log.warn("embed_failed_fallback_to_text", errInfo(e));
     return null;
   }
 }
@@ -34,19 +47,23 @@ function mapsLink(lat: number | null, lng: number | null): string | undefined {
 }
 
 async function getJson(url: string): Promise<any> {
-  const res = await fetch(url, { headers: UA });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  return log.timed("http_get", { host: new URL(url).host }, async () => {
+    const res = await fetch(url, { headers: UA });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  });
 }
 
 async function postOverpass(body: string): Promise<any> {
-  const res = await fetch(OVERPASS_URL, {
-    method: "POST",
-    headers: { ...UA, "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ data: body }).toString(),
+  return log.timed("http_post", { host: new URL(OVERPASS_URL).host }, async () => {
+    const res = await fetch(OVERPASS_URL, {
+      method: "POST",
+      headers: { ...UA, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ data: body }).toString(),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
 }
 
 function haversine(p1: Pt, p2: Pt): number {
@@ -66,14 +83,14 @@ function totalDistanceKm(coords: Pt[]): number {
   return Math.round((total / 1000) * 10) / 10;
 }
 
-function classifyDifficulty(distKm: number, gainM: number): string {
+export function classifyDifficulty(distKm: number, gainM: number): string {
   const score = distKm + gainM / 100;
   if (score < 5) return "easy";
   if (score < 15) return "moderate";
   return "hard";
 }
 
-function estimateDuration(distKm: number, gainM: number): string {
+export function estimateDuration(distKm: number, gainM: number): string {
   const hoursRaw = distKm / 4.0 + gainM / 600.0;
   const halfHours = Math.round(hoursRaw * 2);
   const hours = Math.floor(halfHours / 2);
@@ -82,7 +99,7 @@ function estimateDuration(distKm: number, gainM: number): string {
   return mins ? `${hours}h ${mins}min` : `${hours}h`;
 }
 
-function parseColor(osmc: string): string {
+export function parseColor(osmc: string): string {
   const known = new Set(["red", "blue", "green", "black", "orange", "white", "yellow"]);
   for (const part of osmc.split(":")) {
     const word = part.split("_")[0];
@@ -239,7 +256,7 @@ async function enrichOsm(trail: any): Promise<Record<string, any>> {
 // Rank candidates by how many words of the requested region appear in the trail's
 // pooled geography (region_he + subregion_he + area_he), field-agnostic — a trail
 // matching more region words ranks higher; semantic similarity breaks ties.
-function rerankByRegion(rows: TrailRow[], region: string): TrailRow[] {
+export function rerankByRegion(rows: TrailRow[], region: string): TrailRow[] {
   const words = region.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
   if (words.length === 0) return rows;
   const score = (t: TrailRow) => {
@@ -302,8 +319,12 @@ class TrailService {
       const want = filters.region ? Math.min(20, Math.max(limit, limit * 4)) : limit;
       const raw = await trailDbService.matchSemantic(embedding, filters, want);
       const rows = filters.region ? rerankByRegion(raw, filters.region).slice(0, limit) : raw;
-      if (rows.length > 0) return { trails: rows.map(toTrail), matched_by: "semantic" };
+      if (rows.length > 0) {
+        log.info("catalog_search", { matchedBy: "semantic", count: rows.length, region: filters.region });
+        return { trails: rows.map(toTrail), matched_by: "semantic" };
+      }
       if (hasFilters) {
+        log.info("catalog_search", { matchedBy: "none_filtered", region: filters.region });
         // Filters may have excluded everything (e.g. no ≤5 km trail in that region).
         return {
           trails: [],
@@ -314,6 +335,7 @@ class TrailService {
 
     // Fallback: plain text search (no key, embedding error, or no semantic hits).
     const rows = await trailDbService.search(query, limit);
+    log.info("catalog_search", { matchedBy: rows.length ? "text" : "none", count: rows.length });
     if (rows.length === 0) return { trails: [], note: `No catalog trail matched "${query}".` };
     return { trails: rows.map(toTrail), matched_by: "text" };
   }
@@ -322,7 +344,14 @@ class TrailService {
   async searchOSM(query: string, max = 3, language: "en" | "he" = "en") {
     const trails = await ihmSearch(query, language, Math.min(max, 5));
     if (trails.length === 0) return { trails: [] };
-    const enriched = await Promise.all(trails.map((t) => enrichOsm(t)));
+    // One failed enrichment must not sink the other results — keep what
+    // succeeded, log what didn't.
+    const settled = await Promise.allSettled(trails.map((t) => enrichOsm(t)));
+    const enriched: Record<string, any>[] = [];
+    settled.forEach((s, i) => {
+      if (s.status === "fulfilled") enriched.push(s.value);
+      else log.warn("enrich_osm_failed", { trail: trails[i]?.title, ...errInfo(s.reason) });
+    });
     for (const t of enriched) {
       if ((t.distance_km ?? 0) > DEFAULT_MAX_KM) {
         // Unordered OSM relation geometry inflates distance — drop the numbers.

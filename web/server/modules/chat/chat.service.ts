@@ -1,12 +1,18 @@
 // Chat business logic — the bounded tool-calling agent loop. Streams the final
-// answer's tokens and, if a trip was saved, the resulting tripId. Yields
+// answer's tokens and, if a trip was presented, the resulting itinerary. Yields
 // AgentEvent objects; the controller serialises them as NDJSON.
 
 import OpenAI from "openai";
 import { ContextManager, type ContextMessage } from "../../agent/context";
 import { buildSystemPrompt } from "../../agent/prompt";
 import { TOOL_SCHEMAS, executeTool } from "../../agent/tools";
-import type { ChatMessage, Day, Itinerary, Place, Trail } from "../../shared/types";
+import { createLogger, errInfo } from "../../shared/logger";
+import type { ChatMessage, Itinerary } from "../../shared/types";
+import {
+  STEP_LABELS,
+  isConcreteItinerary,
+  mergeEditedItinerary,
+} from "./chat.helpers";
 
 const MODEL = "gpt-4o";
 const SUMMARY_MODEL = "gpt-4o-mini";
@@ -15,53 +21,7 @@ const MAX_ITERATIONS = 10;
 // stops old tool payloads (fat search results) from riding along forever.
 const MAX_CONTEXT_TOKENS = 32_000;
 
-// A plan is "concrete" — and worth switching the UI to the notebook — only when it
-// has at least one day with an actual trail. Conversational answers, clarifying
-// questions, and empty skeletons stay in the chat view instead of flipping pages.
-function isConcreteItinerary(it: Itinerary | null): boolean {
-  return !!it && Array.isArray(it.days) && it.days.some((d) => !!d?.trail?.name);
-}
-
-const sameName = (a?: string, b?: string) =>
-  !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
-
-// Fill fields the model dropped when re-presenting an UNCHANGED item. LLMs routinely
-// omit long "boring" fields (tiuli_url, waze, maps) on regeneration; if the item's
-// identifying name is unchanged, restore whatever the new version is missing.
-function backfillTrail(oldT?: Trail | null, newT?: Trail | null): Trail | null | undefined {
-  if (!newT || !oldT || !sameName(oldT.name, newT.name)) return newT;
-  const keys: (keyof Trail)[] = [
-    "distance_km", "duration", "difficulty", "start_maps", "waze", "tiuli_url", "description",
-  ];
-  const merged: Trail = { ...newT };
-  for (const k of keys) if (merged[k] == null || merged[k] === "") (merged[k] as any) = oldT[k];
-  return merged;
-}
-
-function backfillPlace(oldP?: Place | null, newP?: Place | null): Place | null | undefined {
-  if (!newP || !oldP || !sameName(oldP.name, newP.name)) return newP;
-  return { ...newP, maps: newP.maps || oldP.maps, address: newP.address || oldP.address };
-}
-
-// On edit, merge the model's regenerated itinerary onto the saved one so unchanged
-// trails/places keep their links. Matches days by day_number; only fills missing
-// fields, so a genuine change (new trail, new restaurant) is never overwritten.
-function mergeEditedItinerary(oldIt: Itinerary, newIt: Itinerary): Itinerary {
-  if (!oldIt.days?.length || !newIt.days?.length) return newIt;
-  const oldByNum = new Map<number, Day>(oldIt.days.map((d) => [d.day_number, d]));
-  const days = newIt.days.map((nd) => {
-    const od = oldByNum.get(nd.day_number);
-    if (!od) return nd;
-    return {
-      ...nd,
-      trail: backfillTrail(od.trail, nd.trail),
-      lunch: backfillPlace(od.lunch, nd.lunch),
-      dinner: backfillPlace(od.dinner, nd.dinner),
-      hotel: backfillPlace(od.hotel, nd.hotel),
-    };
-  });
-  return { ...newIt, days };
-}
+const log = createLogger("chat.service");
 
 export type AgentEvent =
   | { type: "text"; v: string }
@@ -70,20 +30,13 @@ export type AgentEvent =
   | { type: "error"; message: string }
   | { type: "done" };
 
-// Friendly labels for the inline "working" checklist. Keyed so repeated calls of
-// the same kind (e.g. two trail searches for a 2-day trip) show as one row.
-const STEP_LABELS: Record<string, { key: string; label: string }> = {
-  search_tiuli: { key: "trail", label: "Finding a trail" },
-  search_trails: { key: "trail", label: "Finding a trail" },
-  search_places: { key: "places", label: "Picking food & a place to sleep" },
-  get_weather: { key: "weather", label: "Checking the weather" },
-  present_itinerary: { key: "itinerary", label: "Putting your itinerary together" },
-};
-
 type ChatParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
 class ChatService {
   async *run(history: ChatMessage[], currentTrip: Itinerary | null = null): AsyncGenerator<AgentEvent> {
+    const turnStart = Date.now();
+    log.info("turn_start", { historyLen: history.length, hasTrip: !!currentTrip });
+
     const client = new OpenAI();
     // Stateless per request: the client posts full history, we compact a
     // *view* of it before every model call. Summarization (tier 3) is rare
@@ -91,10 +44,12 @@ class ChatService {
     const context = new ContextManager({
       maxContextTokens: MAX_CONTEXT_TOKENS,
       summarizeFn: async (prompt) => {
-        const res = await client.chat.completions.create({
-          model: SUMMARY_MODEL,
-          messages: [{ role: "user", content: prompt }],
-        });
+        const res = await log.timed("openai_summarize", { model: SUMMARY_MODEL }, () =>
+          client.chat.completions.create({
+            model: SUMMARY_MODEL,
+            messages: [{ role: "user", content: prompt }],
+          }),
+        );
         return res.choices[0]?.message?.content?.trim() ?? "";
       },
     });
@@ -121,13 +76,15 @@ class ChatService {
 
     for (let iter = 1; iter <= MAX_ITERATIONS; iter++) {
       const compacted = await context.enforceCompaction(messages as ContextMessage[]);
-      const stream = await client.chat.completions.create({
-        model: MODEL,
-        messages: compacted as ChatParam[],
-        tools: TOOL_SCHEMAS,
-        stream: true,
-        stream_options: { include_usage: true },
-      });
+      const stream = await log.timed("openai_chat", { model: MODEL, iter, msgs: compacted.length }, () =>
+        client.chat.completions.create({
+          model: MODEL,
+          messages: compacted as ChatParam[],
+          tools: TOOL_SCHEMAS,
+          stream: true,
+          stream_options: { include_usage: true },
+        }),
+      );
 
       let content = "";
       const toolCalls: Record<number, { id: string; name: string; args: string }> = {};
@@ -172,7 +129,10 @@ class ChatService {
           let parsed: Record<string, any> = {};
           try {
             parsed = c.args ? JSON.parse(c.args) : {};
-          } catch {
+          } catch (e) {
+            // Malformed streamed JSON — run the tool with {} so its schema
+            // validation produces a structured error the model can react to.
+            log.warn("tool_args_unparseable", { tool: c.name, argsLen: c.args.length, ...errInfo(e) });
             parsed = {};
           }
           if (c.name === "search_tiuli" || c.name === "search_trails") usedTrailSearch = true;
@@ -183,7 +143,11 @@ class ChatService {
             emittedSteps.add(step.key);
             yield { type: "step", key: step.key, label: step.label };
           }
-          const result = await executeTool(c.name, parsed);
+          // executeTool never throws — failures come back as {status:"error"}
+          // observations for the model. timed() here records tool latency.
+          const result = await log.timed("tool_call", { tool: c.name, iter }, () =>
+            executeTool(c.name, parsed),
+          );
           if (c.name === "present_itinerary" && result && typeof result === "object" && (result as any).itinerary) {
             const fresh = (result as any).itinerary as Itinerary;
             // Editing an existing trip → restore links the model dropped for
@@ -196,6 +160,7 @@ class ChatService {
         // Concrete plan in hand → open the notebook and STOP. Never give the model
         // another turn to re-type the itinerary as chat prose.
         if (isConcreteItinerary(presented)) {
+          log.info("turn_end", { outcome: "itinerary", iterations: iter, ms: Date.now() - turnStart });
           yield { type: "itinerary", data: presented as Itinerary };
           yield { type: "done" };
           return;
@@ -210,6 +175,7 @@ class ChatService {
         // The agent planned (searched trails) but didn't hand back a structured
         // itinerary — it wrote the plan as prose (which we suppressed). Convert that
         // into a real present_itinerary so the notebook opens instead of nothing.
+        log.warn("force_present_needed", { iter });
         messages.push({ role: "assistant", content });
         const forceView = (await context.enforceCompaction(messages as ContextMessage[])) as ChatParam[];
         let forced = await this.forcePresent(client, forceView);
@@ -221,10 +187,16 @@ class ChatService {
           yield { type: "text", v: content };
         }
       }
+      log.info("turn_end", {
+        outcome: usedTrailSearch ? "planned" : "answered",
+        iterations: iter,
+        ms: Date.now() - turnStart,
+      });
       yield { type: "done" };
       return;
     }
 
+    log.error("turn_end", { outcome: "max_iterations", iterations: MAX_ITERATIONS, ms: Date.now() - turnStart });
     yield { type: "error", message: "Agent exceeded maximum execution depth." };
     yield { type: "done" };
   }
@@ -234,27 +206,30 @@ class ChatService {
   // concrete itinerary on its own. Returns null if it still can't produce one.
   private async forcePresent(client: OpenAI, messages: ChatParam[]): Promise<Itinerary | null> {
     try {
-      const res = await client.chat.completions.create({
-        model: MODEL,
-        messages: [
-          ...messages,
-          {
-            role: "user",
-            content:
-              "Output ONLY the present_itinerary tool call for the trip you just planned — " +
-              "full structured day-by-day data (each day must include a trail with a name, " +
-              "plus meals, a place to sleep, and the weather). Write no other text.",
-          },
-        ],
-        tools: TOOL_SCHEMAS,
-        tool_choice: { type: "function", function: { name: "present_itinerary" } },
-      });
+      const res = await log.timed("openai_force_present", { model: MODEL }, () =>
+        client.chat.completions.create({
+          model: MODEL,
+          messages: [
+            ...messages,
+            {
+              role: "user",
+              content:
+                "Output ONLY the present_itinerary tool call for the trip you just planned — " +
+                "full structured day-by-day data (each day must include a trail with a name, " +
+                "plus meals, a place to sleep, and the weather). Write no other text.",
+            },
+          ],
+          tools: TOOL_SCHEMAS,
+          tool_choice: { type: "function", function: { name: "present_itinerary" } },
+        }),
+      );
       const call = res.choices[0]?.message?.tool_calls?.[0];
       if (!call) return null;
       let parsed: Record<string, any> = {};
       try {
         parsed = call.function.arguments ? JSON.parse(call.function.arguments) : {};
-      } catch {
+      } catch (e) {
+        log.warn("force_present_unparseable", errInfo(e));
         return null;
       }
       const result = await executeTool("present_itinerary", parsed);
@@ -262,7 +237,9 @@ class ChatService {
         return (result as any).itinerary as Itinerary;
       }
       return null;
-    } catch {
+    } catch (e) {
+      // Best-effort safety net: the turn still ends with the prose answer.
+      log.error("force_present_failed", errInfo(e));
       return null;
     }
   }

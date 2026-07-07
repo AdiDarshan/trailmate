@@ -1,6 +1,8 @@
 // Place business logic — restaurants / hotels / attractions via Nominatim +
 // Overpass. No DB; talks to external OSM APIs only.
 
+import { createLogger } from "../../shared/logger";
+
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 const TIMEOUT_S = 25;
@@ -27,16 +29,22 @@ const TYPE_TAGS: Record<string, string[]> = {
 
 const UA = { "User-Agent": "TrailMate/1.0 (travel planning agent)" };
 
+const log = createLogger("place.service");
+
 async function getJson(url: string): Promise<any> {
-  const res = await fetch(url, { headers: UA });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  return log.timed("http_get", { host: new URL(url).host }, async () => {
+    const res = await fetch(url, { headers: UA });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  });
 }
 
 async function postJson(url: string, body: string): Promise<any> {
-  const res = await fetch(url, { method: "POST", headers: UA, body });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  return log.timed("http_post", { host: new URL(url).host }, async () => {
+    const res = await fetch(url, { method: "POST", headers: UA, body });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  });
 }
 
 type BBox = [number, number, number, number]; // south, west, north, east
@@ -85,7 +93,8 @@ async function overpassSearch(bbox: BBox, tags: string[], maxResults: number) {
   return resp.elements ?? [];
 }
 
-function formatElement(el: any, placeType: string): Record<string, any> | null {
+/** Shape one Overpass element into a place result. Pure; exported for tests. */
+export function formatElement(el: any, placeType: string): Record<string, any> | null {
   const tags = el.tags ?? {};
   const name = tags.name || tags["name:en"] || tags["name:he"];
   if (!name) return null;
