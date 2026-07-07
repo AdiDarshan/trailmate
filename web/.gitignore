@@ -1,6 +1,4 @@
-# Re-include app dirs/files the root Python .gitignore would otherwise hide
-# (root has `lib/` for Python packaging and `.env.*` for secrets).
-!lib/
+# The example env file must stay tracked (root ignores .env.* otherwise).
 !.env.local.example
 
 node_modules
