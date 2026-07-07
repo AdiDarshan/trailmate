@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
+    "smoke": "vitest run --config vitest.smoke.config.ts",
     "typecheck": "tsc --noEmit",
     "seed": "node scripts/seed-trails.mjs"
   },
