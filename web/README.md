@@ -46,6 +46,10 @@ in order:
    the Google provider, below).
 3. `reminders.sql` — `start_date` on trips + reminder dedupe.
 4. `telegram-link.sql` — account ↔ Telegram chat linking.
+5. `chat-sessions.sql` — persistent chat sessions: conversations survive
+   refresh, and each saved trip keeps its chat. There is deliberately no
+   "all past chats" list — only the current chat and saved-trip chats are
+   reachable from the UI.
 
 ## 2. Google sign-in (Supabase Auth)
 

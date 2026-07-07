@@ -12,19 +12,41 @@ export interface AgentStep {
 // Shared streaming-agent hook. Every interaction surface — the welcome
 // composer, per-section Refine popovers, and the collapsed global chat — funnels
 // through send(), so they all append to one conversation and reuse /api/chat.
+//
+// History lives on the server (chat_sessions): send() posts only the new
+// message plus the session id; hydrate() restores a persisted conversation.
 export function useAgent(onItinerary: (data: Itinerary) => void) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // The tools the agent has run this turn, shown as a live checklist in the chat.
   // Reset on each send; kept after a turn so a tool-using answer keeps its trail.
   const [steps, setSteps] = useState<AgentStep[]>([]);
   const onItineraryRef = useRef(onItinerary);
   onItineraryRef.current = onItinerary;
+  // send() must use the freshest session id even when called before a
+  // re-render (e.g. right after hydrate).
+  const sessionIdRef = useRef<string | null>(null);
 
+  const setSession = useCallback((id: string | null) => {
+    sessionIdRef.current = id;
+    setSessionId(id);
+  }, []);
+
+  // Start a fresh conversation. The previous session stays stored server-side
+  // but is only reachable again if it belongs to a saved trip.
   const reset = useCallback(() => {
+    setSession(null);
     setMessages([]);
     setSteps([]);
-  }, []);
+  }, [setSession]);
+
+  // Restore a persisted conversation (current chat or a saved trip's chat).
+  const hydrate = useCallback((id: string | null, msgs: ChatMessage[]) => {
+    setSession(id);
+    setMessages(msgs);
+    setSteps([]);
+  }, [setSession]);
 
   const send = useCallback(async (text: string, tripId: string | null) => {
     const trimmed = text.trim();
@@ -39,7 +61,7 @@ export function useAgent(onItinerary: (data: Itinerary) => void) {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, tripId }),
+        body: JSON.stringify({ content: trimmed, sessionId: sessionIdRef.current, tripId }),
       });
       if (!res.ok || !res.body) throw new Error(`Request failed (${res.status})`);
 
@@ -56,13 +78,15 @@ export function useAgent(onItinerary: (data: Itinerary) => void) {
         buffer = lines.pop() ?? "";
         for (const line of lines) {
           if (!line.trim()) continue;
-          let ev: { type: string; v?: string; data?: Itinerary; message?: string; key?: string; label?: string };
+          let ev: { type: string; id?: string; v?: string; data?: Itinerary; message?: string; key?: string; label?: string };
           try {
             ev = JSON.parse(line);
           } catch {
             continue;
           }
-          if (ev.type === "text") {
+          if (ev.type === "session" && ev.id) {
+            setSession(ev.id);
+          } else if (ev.type === "text") {
             assistant += ev.v ?? "";
             setMessages([...next, { role: "assistant", content: assistant }]);
           } else if (ev.type === "step" && ev.key) {
@@ -87,7 +111,7 @@ export function useAgent(onItinerary: (data: Itinerary) => void) {
       // Steps are kept after the turn (so a tool-using answer keeps its checklist);
       // they're cleared on the next send() or reset().
     }
-  }, [messages, busy]);
+  }, [messages, busy, setSession]);
 
-  return { messages, busy, steps, send, reset };
+  return { messages, sessionId, busy, steps, send, reset, hydrate };
 }
