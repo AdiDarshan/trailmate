@@ -26,10 +26,8 @@ This repo contains two things:
 | Path | What it is |
 |---|---|
 | [`web/`](web/) | **The production app** — Next.js (App Router) + TypeScript, deployed on Vercel. This is what's live. |
-| [`src/trailmate/`](src/trailmate/) | The original **Python prototype** (Streamlit UI + agent). Kept for reference; superseded by `web/`. |
 | [`supabase/`](supabase/) | SQL migrations for the Supabase database. |
-| [`.agents/`](.agents/) | Skill definitions + the tiuli trail dataset used to seed Supabase. |
-| [`scripts/`](scripts/) | One-off tooling (e.g. the tiuli catalog enrichment crawler). |
+| [`.agents/data/`](.agents/data/) | The enriched trail dataset that seeds Supabase (`npm run seed`). The Python scrapers that built it live in git history. |
 
 ## Architecture (web app)
 
@@ -66,16 +64,16 @@ npm run dev                        # http://localhost:3000
 Database setup: run the SQL files in [`supabase/`](supabase/) (schema, auth/RLS,
 reminders, telegram-link) in the Supabase SQL editor.
 
-## The Python prototype
+## The Python prototype (removed)
 
-The original CLI/Streamlit version still runs:
-
-```bash
-pip install -e ".[dev]"
-python -m trailmate                       # CLI
-streamlit run src/trailmate/ui/app.py     # UI
-pytest                                     # tests
-```
+TrailMate started as a Python CLI/Streamlit agent. Its ideas now live in the
+web app — token-budgeted context compaction ([`web/server/agent/context.ts`](web/server/agent/context.ts)),
+the skills pattern ([`web/server/agent/skills/`](web/server/agent/skills/)), and
+Zod-validated tools ([`web/server/agent/tools.schemas.ts`](web/server/agent/tools.schemas.ts)) —
+so the prototype was deleted — along with the Python scrapers that built the
+trail catalog (their output, `.agents/data/trails_seed.json`, is committed, so
+seeding needs no Python). Everything is in git history; the design rationale is
+kept in [`docs/architecture.md`](docs/architecture.md). The repo is now 100% TypeScript.
 
 ## License
 

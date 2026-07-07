@@ -1,5 +1,14 @@
 # TrailMate — Architecture & Design Choices
 
+> **Historical note:** this document describes the original Python prototype
+> (`src/trailmate/`), which has since been removed — its code lives in git
+> history. The ideas below were ported into the production web app:
+> context compaction → `web/server/agent/context.ts`, the skills pattern →
+> `web/server/agent/skills/` (+ a `read_reference` tool replacing
+> `run_script`/`read_file`), and typed tool schemas → `web/server/agent/tools.schemas.ts`.
+> The design trade-offs documented here still explain *why* those pieces look
+> the way they do.
+
 ## 1. Skills are instructions, not code
 
 Skills live in `.agents/skills/<name>/SKILL.md` and are injected into the agent's system prompt at startup. They tell the LLM *what to do* and *how*, but they do not execute themselves. Execution happens through tools registered in `ToolRegistry`.
