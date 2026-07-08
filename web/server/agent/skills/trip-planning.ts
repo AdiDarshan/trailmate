@@ -35,6 +35,11 @@ Rules:
   pass start_date to present_itinerary.
 - Once the region and basics are set, produce a concrete, day-by-day itinerary:
   trail, meals, accommodation, weather per day.
+- MEAL VARIETY: never suggest the same restaurant twice in a trip — not for
+  lunch and dinner on one day, not across days. Ask search_places for enough
+  results to cover every meal (max = number of meals or more) and spread the
+  picks. Only repeat a place when the search results genuinely offer no
+  alternative in the area.
 - WHILE BUILDING THE PLAN, WRITE NOTHING IN CHAT. Once you start gathering data
   and composing the trip, output no prose at all — no lead-in, no narration, no
   day-by-day text, no closing summary. The user sees a live checklist while you
