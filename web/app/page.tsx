@@ -184,6 +184,22 @@ function Home() {
     setRailOpen(false);
   }, [agent]);
 
+  // Discard an unsaved draft: delete its session server-side so the next app
+  // open starts at Welcome, then reset the client to the empty state. The
+  // client resets even if the DELETE fails — worst case the draft reappears
+  // on the next open and can be discarded again.
+  const discardDraft = useCallback(async () => {
+    const sid = agent.sessionId;
+    if (sid) {
+      try {
+        await fetch(`/api/chat/session?sessionId=${encodeURIComponent(sid)}`, { method: "DELETE" });
+      } catch (e) {
+        console.error("discardDraft failed:", e);
+      }
+    }
+    newTrip();
+  }, [agent.sessionId, newTrip]);
+
   const saveTrip = useCallback(async () => {
     if (!itinerary) return;
     try {
@@ -255,6 +271,7 @@ function Home() {
             tripId={isSaved ? currentTripId : null}
             canSave={!!itinerary && !isSaved}
             onSave={saveTrip}
+            onDiscard={currentTripId ? undefined : discardDraft}
             messages={agent.messages}
             busy={agent.busy}
             steps={agent.steps}

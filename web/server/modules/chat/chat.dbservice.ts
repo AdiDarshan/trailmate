@@ -126,6 +126,18 @@ class ChatDbService {
     });
   }
 
+  /** Discard a draft: delete the session (messages cascade in the DB). The
+   *  trip_id-null guard means a saved trip's chat can never be deleted here. */
+  async deleteDraftSession(id: string, userId: string): Promise<void> {
+    return log.timed("delete_draft_session", { sessionId: id, userId }, async () => {
+      const db = await createAuthClient();
+      unwrap(
+        "delete_draft_session",
+        await db.from("chat_sessions").delete().eq("id", id).eq("user_id", userId).is("trip_id", null),
+      );
+    });
+  }
+
   /** Attach a session to a saved trip; the saved plan now lives in trips.data. */
   async linkTrip(sessionId: string, tripId: string): Promise<void> {
     return log.timed("link_trip", { sessionId, tripId }, async () => {

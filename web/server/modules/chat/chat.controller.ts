@@ -160,6 +160,26 @@ class ChatController {
     }
   }
 
+  /** DELETE /api/chat/session?sessionId= — discard an unsaved draft: the
+   *  session and its conversation are deleted, so the next app open starts at
+   *  Welcome instead of restoring the notebook. Drafts only — the dbservice
+   *  refuses to touch sessions attached to a saved trip. */
+  async discard(req: Request): Promise<Response> {
+    const user = await getAuthUser();
+    if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+    const sessionId = new URL(req.url).searchParams.get("sessionId");
+    if (!sessionId) return Response.json({ error: "sessionId is required" }, { status: 400 });
+
+    try {
+      await chatDbService.deleteDraftSession(sessionId, user.id);
+      return Response.json({ ok: true });
+    } catch (e) {
+      log.error("session_discard_failed", { userId: user.id, sessionId, ...errInfo(e) });
+      return Response.json({ error: toPublicMessage(e) }, { status: 500 });
+    }
+  }
+
   /** No session id → fresh chat (or first message about a trip with no chat yet). */
   private async resolveSession(
     userId: string,

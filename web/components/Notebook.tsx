@@ -6,7 +6,7 @@ import remarkGfm from "remark-gfm";
 import {
   Footprints, Utensils, BedDouble, CloudSun, WandSparkles, Clock, Gauge,
   ExternalLink, TriangleAlert, Calendar, Share2, ArrowUp, Sparkles, Compass,
-  MessageSquare, ChevronDown, Mountain, LoaderCircle,
+  MessageSquare, ChevronDown, Mountain, LoaderCircle, Trash2,
 } from "lucide-react";
 import IsraelMap from "./IsraelMap";
 import StepChecklist from "./StepChecklist";
@@ -215,12 +215,13 @@ function WeatherCard({ day }: { day: Day }) {
 }
 
 export default function Notebook({
-  itinerary, tripId, canSave, onSave, messages, busy, steps, onSend,
+  itinerary, tripId, canSave, onSave, onDiscard, messages, busy, steps, onSend,
 }: {
   itinerary: Itinerary;
   tripId: string | null;
   canSave: boolean;
   onSave: () => void | Promise<void>;
+  onDiscard?: () => void | Promise<void>;
   messages: { role: "user" | "assistant"; content: string }[];
   busy: boolean;
   steps: AgentStep[];
@@ -232,6 +233,9 @@ export default function Notebook({
   const [chatOpen, setChatOpen] = useState(false);
   const [globalInput, setGlobalInput] = useState("");
   const [copied, setCopied] = useState(false);
+  // Discard deletes the conversation too — require a second click to confirm.
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
 
   useEffect(() => { setActive(0); }, [itinerary]);
   // Close the refine popover once the agent finishes applying the change.
@@ -252,6 +256,17 @@ export default function Notebook({
   async function handleSave() {
     setSaving(true);
     try { await onSave(); } finally { setSaving(false); }
+  }
+
+  async function handleDiscard() {
+    if (!onDiscard) return;
+    if (!confirmDiscard) {
+      setConfirmDiscard(true);
+      setTimeout(() => setConfirmDiscard(false), 3000);
+      return;
+    }
+    setDiscarding(true);
+    try { await onDiscard(); } finally { setDiscarding(false); }
   }
 
   function shareLink() {
@@ -279,6 +294,17 @@ export default function Notebook({
           )}
         </div>
         <div style={{ display: "flex", gap: 8, flex: "0 0 auto" }}>
+          {canSave && onDiscard && (
+            <button
+              className="tm-btn-ghost"
+              style={{ color: "#a4553f" }}
+              onClick={handleDiscard}
+              disabled={discarding}
+            >
+              <Trash2 size={14} strokeWidth={1.8} />
+              {discarding ? "Discarding…" : confirmDiscard ? "Delete draft & chat?" : "Discard"}
+            </button>
+          )}
           {canSave && (
             <button className="tm-btn-ghost" onClick={handleSave} disabled={saving}>
               {saving ? "Saving…" : "Save trip"}
